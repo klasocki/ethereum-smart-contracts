@@ -2,6 +2,8 @@
 
 pragma solidity ^0.8.0;
 
+import "./Car.sol";
+
 /** 
  * @title CarLease
  * @dev Implements car leasing
@@ -12,11 +14,12 @@ contract CarLease {
     enum ContractDuration { ONE_MONTH, THREE_MONTHS, SIX_MONTHS, TWELVE_MONTHS }
 
     address payable private owner;
+    Car public carToken;
     mapping (address => bool) private employees;
-
 
     constructor() {
         owner = payable(msg.sender);
+        carToken = new Car();
     }
 
     // Only the owner of the SC can call the function
@@ -47,7 +50,7 @@ contract CarLease {
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
     /// @return Monthly quota in ether (?)
-    function calculateMonthlyQuota(uint8 yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public pure returns(uint) {
+    function calculateMonthlyQuota(CarLibrary.CarData memory car, uint8 yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public pure returns(uint) {
         
         require(yearsOfExperience < 100, "yearsOfExperience must be less than 100.");
 
@@ -71,9 +74,43 @@ contract CarLease {
             durationFactor = 1;
         }
 
-        uint quota = durationFactor * mileageFactor * (100 - yearsOfExperience);
+        uint quota = (durationFactor * mileageFactor * (100 - yearsOfExperience)) / (1 + ((car.kms + 1 ) / 10000));
 
         return quota;
     }
+
+    /// @notice Propose a new contract to the leaser, the contract still needs to be confirmed by the leaser. The amount sent must be 4x the monthly quota (1 for the rent and 3 for the deposit)
+    /// @dev WORK IN PROGRESS
+    /// @param carId the car NFT id to rent
+    /// @param yearsOfExperience the years of driving license ownage
+    /// @param mileageCap the selected mileage limit
+    /// @param duration the duration of the contract
+    /// @return Contract id (?)
+    function proposeContract(uint carId, uint8 yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public payable returns(uint) {
+        // TODO: implement this
+        return 0;
+    }
+
+    /// @notice Delete a contract proposal and refund the sent money.
+    /// @dev WORK IN PROGRESS
+    function deleteContractProposal(uint contractId) public {
+        // TODO: implement this
+    }
+
+    /// @notice Accept or refuse a contract proposal
+    /// @dev WORK IN PROGRESS
+    function evaluateContract(uint contractId, bool accept) public onlyAdmin {
+        // TODO: implement this
+    }
+
+    /// @notice Check if there is any unpaid contract. It also performs consecuent actions.
+    /// @dev WORK IN PROGRESS
+    function checkInsolvencies() public onlyAdmin {
+        // TODO: implement this
+        // this should go throught every contract and see if there are unpaid ones. 
+        // If so, the locked amount must be sent to leaser (owner) and the contract must be eliminated.
+    }
+
+
 
 }
