@@ -10,12 +10,20 @@ import "./Car.sol";
  */
 contract CarLease {
 
+    struct Contract {
+        uint monthlyQuota;
+        uint startTs;
+        uint carId;
+        uint amountPayed;
+        ContractDuration duration;
+    }
+
     enum MileageCap { SMALL, MEDIUM, LARGE, UNLIMITED }
     enum ContractDuration { ONE_MONTH, THREE_MONTHS, SIX_MONTHS, TWELVE_MONTHS }
 
     address payable private owner;
     Car public carToken;
-    mapping (address => bool) private employees;
+    mapping(address => Contract) contracts;
 
     constructor() {
         owner = payable(msg.sender);
@@ -28,31 +36,17 @@ contract CarLease {
         _;
     }
 
-    // Only the owner of the SC or the admins cal call the function
-    modifier onlyAdmin() {
-        require( msg.sender == owner || employees[msg.sender], "Only admins can call this.");
-        _;
-    }
-
-    // Add the given address to the employees list
-    function addEmployee(address _employee) public onlyOwner {
-        employees[_employee] = true;
-    }
-
-    // Remove the given address to the employees list
-    function removeEmployee(address _employee) public onlyOwner {
-        delete employees[_employee];
-    }
-
     /// @notice Calculate the monthly quota of a car lease
-    /// @dev WORK IN PROGRESS this is just an example, it's still missing the car NFT in the calculation
+    /// @dev this is just an example, it's still missing the car NFT in the calculation
     /// @param yearsOfExperience the years of possession of a dricing license
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
     /// @return Monthly quota in ether (?)
-    function calculateMonthlyQuota(CarLibrary.CarData memory car, uint8 yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public pure returns(uint) {
+    function calculateMonthlyQuota(uint carId, uint8 yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public view returns(uint) {
         
         require(yearsOfExperience < 100, "yearsOfExperience must be less than 100.");
+
+        CarLibrary.CarData memory car = carToken.getCarData(carId);
 
         uint mileageFactor = 1;
 
@@ -79,38 +73,82 @@ contract CarLease {
         return quota;
     }
 
-    /// @notice Propose a new contract to the leaser, the contract still needs to be confirmed by the leaser. The amount sent must be 4x the monthly quota (1 for the rent and 3 for the deposit)
-    /// @dev WORK IN PROGRESS
+    /// @notice Propose a new contract to the leaser, the contract still needs to be confirmed by the leaser. The amount sent must be 4x the monthly quota (1 for the rent and 3 for the deposit), if you send more it will be burned.
     /// @param carId the car NFT id to rent
     /// @param yearsOfExperience the years of driving license ownage
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
-    /// @return Contract id (?)
-    function proposeContract(uint carId, uint8 yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public payable returns(uint) {
-        // TODO: implement this
-        return 0;
+    function proposeContract(uint carId, uint8 yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public payable {
+
+        require(contracts[msg.sender].monthlyQuota == 0, "You already have a contract, delete it before doing a new one."); // easier way to check for previous proposals
+        
+        uint monthlyQuota = calculateMonthlyQuota(carId, yearsOfExperience, mileageCap, duration);
+
+        require(msg.value >= 4 * monthlyQuota, "Amount sent is not enough."); // TODO: manage unit of measure
+
+        contracts[msg.sender] = Contract(monthlyQuota, 0, carId, 0, duration);
+    }
+    
+    /// @notice Delete and refund a contract proposal, called by renter
+    function deleteContractProposal() public {
+
+        uint monthlyQuota = contracts[msg.sender].monthlyQuota;
+
+        require(monthlyQuota > 0, "No contracts found.");
+        require(contracts[msg.sender].startTs == 0, "Contract already started.");
+
+        payable(msg.sender).transfer(4*monthlyQuota);
+        delete contracts[msg.sender];
     }
 
-    /// @notice Delete a contract proposal and refund the sent money.
-    /// @dev WORK IN PROGRESS
-    function deleteContractProposal(uint contractId) public {
-        // TODO: implement this
-    }
+    /// @notice Accept or refuse a contract proposal, called by leasee
+    function evaluateContract(address contractRenter, bool accept) public onlyOwner {
+        
+        Contract storage con = contracts[contractRenter];
 
-    /// @notice Accept or refuse a contract proposal
-    /// @dev WORK IN PROGRESS
-    function evaluateContract(uint contractId, bool accept) public onlyAdmin {
-        // TODO: implement this
+        require(con.startTs == 0, "Renter doesn't have contracts to evaluate.");
+
+        if (accept) {
+            con.startTs = block.timestamp;
+            con.amountPayed = con.monthlyQuota;
+            carToken.setCarRenter(con.carId, contractRenter);
+            owner.transfer(con.monthlyQuota);
+        } else {
+            payable(contractRenter).transfer(4*con.monthlyQuota);
+            delete contracts[contractRenter];
+        }
+
     }
 
     /// @notice Check if there is any unpaid contract. It also performs consecuent actions.
-    /// @dev WORK IN PROGRESS
-    function checkInsolvencies() public onlyAdmin {
-        // TODO: implement this
-        // this should go throught every contract and see if there are unpaid ones. 
-        // If so, the locked amount must be sent to leaser (owner) and the contract must be eliminated.
+    function checkInsolvency(address renterToCheck) public {
+        // this should check if the contract is unpayed. 
+        // If so, the locked amount must be sent to leasee (owner) and the contract must be eliminated.
+        // A contract is unpaid if amountPayed < monthsPassed*monthlyQuota
+        Contract memory con = contracts[renterToCheck];
+        require(con.monthlyQuota > 0, "Contract not found.");
+        uint monthsPassed = (block.timestamp - con.startTs) / 60 / 60 / 24 / 30; // TODO: test this calculation
+        if (con.amountPayed < monthsPassed*con.monthlyQuota) {
+            owner.transfer(3*con.monthlyQuota);
+            delete contracts[renterToCheck];
+        }
     }
 
+    /// @notice Open the car, checking if the sender is authorized
+    function openCar(uint carId) public {
+        checkInsolvency(msg.sender);
+        require(contracts[msg.sender].carId==carId, "Car not rented to this user.");
+    }
 
+    /// @notice Mint a new car NFT and set the ownership to the leasee.
+    function createCar(string memory model, string memory colour, uint16 yearOfMatriculation, uint24 originalValue, uint24 kms) public onlyOwner returns(uint) {
+        uint tokenId = carToken.safeMint(msg.sender, model, colour, yearOfMatriculation, originalValue, kms);
+        return tokenId;
+    }
 
+    /// @notice Function used to pay the rent, it can be payed everytime the renter wants.
+    function payRent() public payable {
+        require(contracts[msg.sender].monthlyQuota > 0, "Contract not found.");
+        contracts[msg.sender].amountPayed += msg.value;
+    }
 }
