@@ -62,6 +62,12 @@ contract Car is ERC721, ERC721Enumerable, Ownable {
         carsData[carId].renter = renter;
     }
 
+    function addCarKm(uint carId, uint24 amount) public {
+        require(_isApprovedOrOwner(_msgSender(), carId), "ERC721Burnable: caller is not owner nor approved");
+        CarLibrary.CarData storage car = carsData[carId];
+        car.kms += amount;
+    }
+    
     function burn(uint256 tokenId) public {
         //solhint-disable-next-line max-line-length
         require(_isApprovedOrOwner(_msgSender(), tokenId), "ERC721Burnable: caller is not owner nor approved");
