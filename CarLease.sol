@@ -185,6 +185,15 @@ contract CarLease {
     }
 
     function extendContract(address renter) internal {
-
+        Contract storage con = contracts[renter];
+        uint newDeposit = 3*con.newMonthlyQuota;
+        uint oldDeposit = 3*con.monthlyQuota;
+        payable(renter).transfer(oldDeposit-newDeposit); // send the deposit difference
+        con.monthlyQuota = con.newMonthlyQuota;
+        con.newMonthlyQuota = 0;
+        con.startTs = block.timestamp;
+        con.extended = false;
+        con.amountPayed = 0;
+        con.duration = ContractDuration.TWELVE_MONTHS;
     }
 }
