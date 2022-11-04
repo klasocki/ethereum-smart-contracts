@@ -78,7 +78,7 @@ contract CarLease {
 
         uint quota = (durationFactor * mileageFactor * (experienceFactor)) / (1 + ((car.kms + 1 ) / 10000));
 
-        return quota;
+        return quota*1000000;
     }
 
     /// @notice Propose a new contract to the leaser, the contract still needs to be confirmed by the leaser. The amount sent must be 4x the monthly quota (1 for the rent and 3 for the deposit), if you send more it will be burned.
@@ -88,8 +88,12 @@ contract CarLease {
     /// @param duration the duration of the contract
     function proposeContract(uint carId, YearsOfExperience yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public payable {
 
+        CarLibrary.CarData memory carData = carToken.getCarData(carId);
+
         require(contracts[msg.sender].monthlyQuota == 0, "You already have a contract, delete it before doing a new one."); // easier way to check for previous proposals
-        
+        require(carData.renter == address(0), "The car is already rented.");
+        require(carData.yearOfMatriculation != 0, "The car doesn't exists.");
+
         uint monthlyQuota = calculateMonthlyQuota(carId, yearsOfExperience, mileageCap, duration);
 
         require(msg.value >= 4 * monthlyQuota, "Amount sent is not enough."); // TODO: manage unit of measure
@@ -139,7 +143,7 @@ contract CarLease {
 
         Contract memory con = contracts[renterToCheck];
         require(con.monthlyQuota > 0, "Contract not found.");
-        uint monthsPassed = (block.timestamp - con.startTs) / SECONDS_IN_MINUTE / MINUTES_IN_HOUR / HOURS_IN_DAY / DAYS_IN_MONTH; // TODO: test this calculation
+        uint monthsPassed = (block.timestamp - con.startTs) / SECONDS_IN_MINUTE; // / MINUTES_IN_HOUR; HOURS_IN_DAY / DAYS_IN_MONTH; // TODO: test this calculation
 
         uint durationMonths = 1;
 
@@ -203,11 +207,22 @@ contract CarLease {
         uint newDeposit = 3*con.newMonthlyQuota;
         uint oldDeposit = 3*con.monthlyQuota;
         payable(renter).transfer(oldDeposit-newDeposit); // send the deposit difference
-        con.monthlyQuota = con.newMonthlyQuota;
+
+        uint lastContractDuration = 1;
+        if (con.duration == ContractDuration.THREE_MONTHS) {
+            lastContractDuration = 3;
+        } else if (con.duration == ContractDuration.SIX_MONTHS) {
+            lastContractDuration = 6;
+        } else if (con.duration == ContractDuration.TWELVE_MONTHS) {
+            lastContractDuration = 12;
+        }
+
+        con.amountPayed -= con.monthlyQuota*lastContractDuration;
+
         con.newMonthlyQuota = 0;
         con.startTs = block.timestamp;
         con.extended = false;
-        con.amountPayed = 0;
+        con.monthlyQuota = con.newMonthlyQuota;
         con.duration = ContractDuration.TWELVE_MONTHS;
     }
 }
