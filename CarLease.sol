@@ -16,13 +16,14 @@ contract CarLease {
         uint carId;
         uint amountPayed;
         ContractDuration duration;
-        bool extended;
+        ContractExtensionStatus extended;
         uint newMonthlyQuota;
     }
 
     enum MileageCap { SMALL, MEDIUM, LARGE, UNLIMITED }
     enum ContractDuration { ONE_MONTH, THREE_MONTHS, SIX_MONTHS, TWELVE_MONTHS }
     enum YearsOfExperience { NEW_DRIVER, EXPERIENCED_DRIVER }
+    enum ContractExtensionStatus { NOT_EXTENDED, PROPOSED, ACCEPTED }
 
     uint constant SECONDS_IN_MINUTE = 60;
     uint constant MINUTES_IN_HOUR = 60;
@@ -158,7 +159,7 @@ contract CarLease {
         if (con.amountPayed < monthsPassed*con.monthlyQuota) {
             deleteContract(renterToCheck, false); // If not enough money paid, cancel the contract and take deposit
         } else if (monthsPassed >= durationMonths) {
-            if (con.extended) {
+            if (con.extended == ContractExtensionStatus.ACCEPTED) {
                 extendContract(renterToCheck);  // If contract is expired and renewd, refund the difference of the deposit and renew the contract
             } else {
                 deleteContract(renterToCheck, true); // If contract is expired and not renewd, refund the deposit and delete the contract
@@ -186,12 +187,19 @@ contract CarLease {
 
     /// @notice Called by the renter, extende a contract, the driver automatically becomes experienced because they drove our car before.
     /// @dev Right now the extension is not approved by the leasee
-    function registerContractExtension(MileageCap newMileageCap) public {
+    function proposeContractExtension(MileageCap newMileageCap) public {
         checkInsolvency(msg.sender);
         require(contracts[msg.sender].monthlyQuota > 0 && contracts[msg.sender].startTs > 0, "Contract not found.");
         Contract storage con = contracts[msg.sender];
-        con.extended = true;
+        con.extended = ContractExtensionStatus.PROPOSED;
         con.newMonthlyQuota = calculateMonthlyQuota(con.carId, YearsOfExperience.EXPERIENCED_DRIVER, newMileageCap, con.duration);
+    }
+
+    /// @notice 
+    function confirmContractExtension(address renter) public onlyOwner {
+        require(contracts[msg.sender].monthlyQuota > 0 && contracts[msg.sender].startTs > 0, "Contract not found.");
+        Contract storage con = contracts[renter];
+        con.extended = ContractExtensionStatus.ACCEPTED;
     }
 
     function deleteContract(address renter, bool refundDeposit) internal {
@@ -221,7 +229,7 @@ contract CarLease {
 
         con.newMonthlyQuota = 0;
         con.startTs = block.timestamp;
-        con.extended = false;
+        con.extended = ContractExtensionStatus.NOT_EXTENDED;
         con.monthlyQuota = con.newMonthlyQuota;
         con.duration = ContractDuration.TWELVE_MONTHS;
     }
