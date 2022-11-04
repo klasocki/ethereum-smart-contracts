@@ -22,6 +22,7 @@ contract CarLease {
 
     enum MileageCap { SMALL, MEDIUM, LARGE, UNLIMITED }
     enum ContractDuration { ONE_MONTH, THREE_MONTHS, SIX_MONTHS, TWELVE_MONTHS }
+    enum YearsOfExperience { NEW_DRIVER, EXPERIENCED_DRIVER }
 
     uint constant SECONDS_IN_MINUTE = 60;
     uint constant MINUTES_IN_HOUR = 60;
@@ -49,9 +50,7 @@ contract CarLease {
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
     /// @return Monthly quota in ether (?)
-    function calculateMonthlyQuota(uint carId, uint8 yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public view returns(uint) {
-        
-        require(yearsOfExperience < 100, "yearsOfExperience must be less than 100.");
+    function calculateMonthlyQuota(uint carId, YearsOfExperience yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public view returns(uint) {
 
         CarLibrary.CarData memory car = carToken.getCarData(carId);
 
@@ -75,7 +74,9 @@ contract CarLease {
             durationFactor = 1;
         }
 
-        uint quota = (durationFactor * mileageFactor * (100 - yearsOfExperience)) / (1 + ((car.kms + 1 ) / 10000));
+        uint experienceFactor = yearsOfExperience == YearsOfExperience.NEW_DRIVER ? 2 : 1;
+
+        uint quota = (durationFactor * mileageFactor * (experienceFactor)) / (1 + ((car.kms + 1 ) / 10000));
 
         return quota;
     }
@@ -85,7 +86,7 @@ contract CarLease {
     /// @param yearsOfExperience the years of driving license ownage
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
-    function proposeContract(uint carId, uint8 yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public payable {
+    function proposeContract(uint carId, YearsOfExperience yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public payable {
 
         require(contracts[msg.sender].monthlyQuota == 0, "You already have a contract, delete it before doing a new one."); // easier way to check for previous proposals
         
@@ -128,6 +129,9 @@ contract CarLease {
     }
 
     /// @notice Check if there is any unpaid contract. It also performs consecuent actions.
+    /// @dev This function does way too much. It should just check the payments, and not cancel or extend probably. 
+    /// Also the extensions and cancelations dont work that well, if the user breaks the car he can still extend contracts forever.
+    /// There is no way to loose the deposit other than not paying, so I can just keep extending forever.
     function checkInsolvency(address renterToCheck) public {
         // this should check if the contract is unpayed. 
         // If so, the locked amount must be sent to leasee (owner) and the contract must be eliminated.
@@ -174,6 +178,16 @@ contract CarLease {
     function payRent() public payable {
         require(contracts[msg.sender].monthlyQuota > 0, "Contract not found.");
         contracts[msg.sender].amountPayed += msg.value;
+    }
+
+    /// @notice Called by the renter, extende a contract, the driver automatically becomes experienced because they drove our car before.
+    /// @dev Right now the extension is not approved by the leasee
+    function registerContractExtension(MileageCap newMileageCap) public {
+        checkInsolvency(msg.sender);
+        require(contracts[msg.sender].monthlyQuota > 0 && contracts[msg.sender].startTs > 0, "Contract not found.");
+        Contract storage con = contracts[msg.sender];
+        con.extended = true;
+        con.newMonthlyQuota = calculateMonthlyQuota(con.carId, YearsOfExperience.EXPERIENCED_DRIVER, newMileageCap, con.duration);
     }
 
     function deleteContract(address renter, bool refundDeposit) internal {
