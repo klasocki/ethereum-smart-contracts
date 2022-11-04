@@ -99,7 +99,7 @@ contract CarLease {
 
         require(msg.value >= 4 * monthlyQuota, "Amount sent is not enough."); // TODO: manage unit of measure
 
-        contracts[msg.sender] = Contract(monthlyQuota, 0, carId, 0, duration, false, 0);
+        contracts[msg.sender] = Contract(monthlyQuota, 0, carId, 0, duration, ContractExtensionStatus.NOT_EXTENDED, 0);
     }
     
     /// @notice Delete and refund a contract proposal, called by renter
