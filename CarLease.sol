@@ -16,10 +16,17 @@ contract CarLease {
         uint carId;
         uint amountPayed;
         ContractDuration duration;
+        bool extended;
+        uint newMonthlyQuota;
     }
 
     enum MileageCap { SMALL, MEDIUM, LARGE, UNLIMITED }
     enum ContractDuration { ONE_MONTH, THREE_MONTHS, SIX_MONTHS, TWELVE_MONTHS }
+
+    uint constant SECONDS_IN_MINUTE = 60;
+    uint constant MINUTES_IN_HOUR = 60;
+    uint constant HOURS_IN_DAY =  24;
+    uint constant DAYS_IN_MONTH = 30;
 
     address payable private owner;
     Car public carToken;
@@ -86,7 +93,7 @@ contract CarLease {
 
         require(msg.value >= 4 * monthlyQuota, "Amount sent is not enough."); // TODO: manage unit of measure
 
-        contracts[msg.sender] = Contract(monthlyQuota, 0, carId, 0, duration);
+        contracts[msg.sender] = Contract(monthlyQuota, 0, carId, 0, duration, false, 0);
     }
     
     /// @notice Delete and refund a contract proposal, called by renter
@@ -125,13 +132,30 @@ contract CarLease {
         // this should check if the contract is unpayed. 
         // If so, the locked amount must be sent to leasee (owner) and the contract must be eliminated.
         // A contract is unpaid if amountPayed < monthsPassed*monthlyQuota
+
         Contract memory con = contracts[renterToCheck];
         require(con.monthlyQuota > 0, "Contract not found.");
-        uint monthsPassed = (block.timestamp - con.startTs) / 60 / 60 / 24 / 30; // TODO: test this calculation
-        if (con.amountPayed < monthsPassed*con.monthlyQuota) {
-            owner.transfer(3*con.monthlyQuota);
-            delete contracts[renterToCheck];
+        uint monthsPassed = (block.timestamp - con.startTs) / SECONDS_IN_MINUTE / MINUTES_IN_HOUR / HOURS_IN_DAY / DAYS_IN_MONTH; // TODO: test this calculation
+
+        uint durationMonths = 1;
+
+        if (con.duration == ContractDuration.THREE_MONTHS) {
+            durationMonths = 3;
+        } else if (con.duration == ContractDuration.SIX_MONTHS) {
+            durationMonths = 6;
+        } else if (con.duration == ContractDuration.TWELVE_MONTHS) {
+            durationMonths = 12;
         }
+
+        if (con.amountPayed < monthsPassed*con.monthlyQuota) {
+            deleteContract(renterToCheck, false); // If not enough money paid, cancel the contract and take deposit
+        } else if (monthsPassed >= durationMonths) {
+            if (con.extended) {
+                extendContract(renterToCheck);  // If contract is expired and renewd, refund the difference of the deposit and renew the contract
+            } else {
+                deleteContract(renterToCheck, true); // If contract is expired and not renewd, refund the deposit and delete the contract
+            }
+        } 
     }
 
     /// @notice Open the car, checking if the sender is authorized
@@ -150,5 +174,17 @@ contract CarLease {
     function payRent() public payable {
         require(contracts[msg.sender].monthlyQuota > 0, "Contract not found.");
         contracts[msg.sender].amountPayed += msg.value;
+    }
+
+    function deleteContract(address renter, bool refundDeposit) internal {
+        Contract memory con = contracts[renter];
+        address payable giveDepositTo = refundDeposit ? payable(renter) : owner; 
+        giveDepositTo.transfer(3*con.monthlyQuota);
+        delete contracts[renter];
+        carToken.setCarRenter(con.carId, address(0));
+    }
+
+    function extendContract(address renter) internal {
+
     }
 }
