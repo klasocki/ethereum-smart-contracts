@@ -27,6 +27,16 @@ contract Car is ERC721, Ownable {
 
     constructor() ERC721("Car", "CAR") {}
 
+    modifier onlyApprovedOrOwner(uint256 carId) {
+        require(_isApprovedOrOwner(_msgSender(), carId), "Caller is not owner nor approved");
+        _;
+    }
+
+    modifier notRented(uint256 carId) {
+        require(carsData[carId].renter == address(0), "Cannot modify a rented car.");
+        _;
+    }
+
     function safeMint(address to, string memory model, string memory colour, uint16 yearOfMatriculation, uint24 originalValue, uint24 kms) public onlyOwner returns(uint) {
         uint256 tokenId = _tokenIdCounter.current();
         _tokenIdCounter.increment();
@@ -39,20 +49,18 @@ contract Car is ERC721, Ownable {
         return carsData[carId];
     }
 
-    function setCarRenter(uint carId, address renter) public onlyOwner {
+    function setCarRenter(uint carId, address renter) public onlyApprovedOrOwner(carId) notRented(carId) {
         carsData[carId].renter = renter;
     }
 
-    function addCarKm(uint carId, uint24 amount) public {
-        require(_isApprovedOrOwner(_msgSender(), carId), "ERC721Burnable: caller is not owner nor approved");
+    function addCarKm(uint carId, uint24 amount) public onlyApprovedOrOwner(carId){
         CarLibrary.CarData storage car = carsData[carId];
         car.kms += amount;
     }
     
-    function burn(uint256 tokenId) public {
-        //solhint-disable-next-line max-line-length
-        require(_isApprovedOrOwner(_msgSender(), tokenId), "ERC721Burnable: caller is not owner nor approved");
-        require(carsData[tokenId].renter == address(0), "Cannot burn a rented car.");
-        _burn(tokenId);
+    function burn(uint256 carId) public onlyApprovedOrOwner(carId) notRented(carId) {
+        _burn(carId);
     }
+
+    
 }

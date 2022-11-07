@@ -23,6 +23,7 @@ contract CarLeaseTest is CarLease{
         acc0 = TestsAccounts.getAccount(0); 
         acc1 = TestsAccounts.getAccount(1);
         acc2 = TestsAccounts.getAccount(2);
+        safeMint(acc0, "Dacia", "Black", 2000, 10000, 50000);
     }
 
     // #sender: account-0

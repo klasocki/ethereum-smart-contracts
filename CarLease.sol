@@ -31,6 +31,7 @@ contract CarLease {
     uint constant DAYS_IN_MONTH = 30;
 
     address payable private owner;
+    uint256 transferrableAmount;
     Car public carToken;
     mapping(address => Contract) contracts;
 
@@ -79,7 +80,7 @@ contract CarLease {
 
         uint quota = (durationFactor * mileageFactor * (experienceFactor)) / (1 + ((car.kms + 1 ) / 10000));
 
-        return quota*1000000;
+        return quota*1e6;
     }
 
     /// @notice Propose a new contract to the leaser, the contract still needs to be confirmed by the leaser. The amount sent must be 4x the monthly quota (1 for the rent and 3 for the deposit), if you send more it will be burned.
@@ -122,6 +123,7 @@ contract CarLease {
         require(con.startTs == 0, "Renter doesn't have contracts to evaluate.");
 
         if (accept) {
+            require(carToken.getCarData(con.carId).renter == address(0), "Car is already rented!");
             con.startTs = block.timestamp;
             con.amountPayed = con.monthlyQuota;
             carToken.setCarRenter(con.carId, contractRenter);
@@ -141,6 +143,8 @@ contract CarLease {
         // this should check if the contract is unpayed. 
         // If so, the locked amount must be sent to leasee (owner) and the contract must be eliminated.
         // A contract is unpaid if amountPayed < monthsPassed*monthlyQuota
+
+        //better to check using the carId instead of the renter address
 
         Contract memory con = contracts[renterToCheck];
         require(con.monthlyQuota > 0, "Contract not found.");
@@ -179,10 +183,18 @@ contract CarLease {
         return tokenId;
     }
 
+
+
     /// @notice Function used to pay the rent, it can be payed everytime the renter wants.
     function payRent() public payable {
         require(contracts[msg.sender].monthlyQuota > 0, "Contract not found.");
         contracts[msg.sender].amountPayed += msg.value;
+        transferrableAmount += msg.value;
+    }
+
+    function retrieveMoney(uint amount) public onlyOwner {
+        require(amount <= transferrableAmount, "Not enough money in the contract.");
+        owner.transfer(amount);
     }
 
     /// @notice Called by the renter, extende a contract, the driver automatically becomes experienced because they drove our car before.
