@@ -17,7 +17,7 @@ contract CarLease {
         uint amountPayed;
         ContractDuration duration;
         ContractExtensionStatus extended;
-        uint newMonthlyQuota;
+        MileageCap newMileageCap; // used for contract extension
     }
 
     enum MileageCap { SMALL, MEDIUM, LARGE, UNLIMITED }
@@ -83,7 +83,7 @@ contract CarLease {
         return quota*1e6;
     }
 
-    /// @notice Propose a new contract to the leaser, the contract still needs to be confirmed by the leaser. The amount sent must be 4x the monthly quota (1 for the rent and 3 for the deposit), if you send more it will be burned.
+    /// @notice Propose a new contract to the leaser, the contract still needs to be confirmed by the leaser. The amount sent must be at least 4x the monthly quota (1 for the rent and 3 for the deposit).
     /// @param carId the car NFT id to rent
     /// @param yearsOfExperience the years of driving license ownage
     /// @param mileageCap the selected mileage limit
@@ -100,7 +100,7 @@ contract CarLease {
 
         require(msg.value >= 4 * monthlyQuota, "Amount sent is not enough."); // TODO: manage unit of measure
 
-        contracts[msg.sender] = Contract(monthlyQuota, 0, carId, 0, duration, ContractExtensionStatus.NOT_EXTENDED, 0);
+        contracts[msg.sender] = Contract(monthlyQuota, 0, carId, msg.value - 3*monthlyQuota, duration, ContractExtensionStatus.NOT_EXTENDED, mileageCap);
     }
     
     /// @notice Delete and refund a contract proposal, called by renter
@@ -111,7 +111,7 @@ contract CarLease {
         require(monthlyQuota > 0, "No contracts found.");
         require(contracts[msg.sender].startTs == 0, "Contract already started.");
 
-        payable(msg.sender).transfer(4*monthlyQuota);
+        payable(msg.sender).transfer(3*monthlyQuota + contracts[msg.sender].amountPayed);
         delete contracts[msg.sender];
     }
 
@@ -129,7 +129,7 @@ contract CarLease {
             carToken.setCarRenter(con.carId, contractRenter);
             transferrableAmount += con.monthlyQuota;
         } else {
-            payable(contractRenter).transfer(4*con.monthlyQuota);
+            payable(contractRenter).transfer(3*con.monthlyQuota+con.amountPayed);
             delete contracts[contractRenter];
         }
 
@@ -200,7 +200,9 @@ contract CarLease {
         require(contracts[msg.sender].monthlyQuota > 0 && contracts[msg.sender].startTs > 0, "Contract not found.");
         Contract storage con = contracts[msg.sender];
         con.extended = ContractExtensionStatus.PROPOSED;
-        con.newMonthlyQuota = calculateMonthlyQuota(con.carId, YearsOfExperience.EXPERIENCED_DRIVER, newMileageCap, con.duration);
+        con.newMileageCap = newMileageCap;
+        // Commented because it's done when the contract is extended
+        //con.newMonthlyQuota = calculateMonthlyQuota(con.carId, YearsOfExperience.EXPERIENCED_DRIVER, newMileageCap, con.duration);
     }
 
     /// @notice 
@@ -220,7 +222,10 @@ contract CarLease {
 
     function extendContract(address renter) internal {
         Contract storage con = contracts[renter];
-        uint newDeposit = 3*con.newMonthlyQuota;
+
+        uint newMonthlyQuota = calculateMonthlyQuota(con.carId, YearsOfExperience.EXPERIENCED_DRIVER, con.newMileageCap, ContractDuration.TWELVE_MONTHS);
+
+        uint newDeposit = 3*newMonthlyQuota;
         uint oldDeposit = 3*con.monthlyQuota;
         payable(renter).transfer(oldDeposit-newDeposit); // send the deposit difference
 
@@ -235,10 +240,9 @@ contract CarLease {
 
         con.amountPayed -= con.monthlyQuota*lastContractDuration;
 
-        con.newMonthlyQuota = 0;
         con.startTs = block.timestamp;
         con.extended = ContractExtensionStatus.NOT_EXTENDED;
-        con.monthlyQuota = con.newMonthlyQuota;
+        con.monthlyQuota = newMonthlyQuota;
         con.duration = ContractDuration.TWELVE_MONTHS;
     }
 }
