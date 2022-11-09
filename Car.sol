@@ -54,10 +54,11 @@ contract Car is ERC721, Ownable {
         return carsData[carId];
     }
 
-    function setCarRenter(uint carId, address renter) public existingCar(carId) onlyApprovedOrOwner(carId) notRented(carId) {
+    function setCarRenter(uint carId, address renter) public existingCar(carId) onlyOwner notRented(carId) {
         carsData[carId].renter = renter;
     }
 
+    // Called by trusted hardware (
     function addCarKm(uint carId, uint24 amount) public existingCar(carId) onlyApprovedOrOwner(carId){
         CarLibrary.CarData storage car = carsData[carId];
         car.kms += amount;
