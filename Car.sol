@@ -37,6 +37,11 @@ contract Car is ERC721, Ownable {
         _;
     }
 
+    modifier existingCar(uint256 carId) {
+        require(_exists(carId), "Car doesn't exists.");
+        _;
+    }
+
     function safeMint(address to, string memory model, string memory colour, uint16 yearOfMatriculation, uint24 originalValue, uint24 kms) public onlyOwner returns(uint) {
         uint256 tokenId = _tokenIdCounter.current();
         _tokenIdCounter.increment();
@@ -45,20 +50,20 @@ contract Car is ERC721, Ownable {
         return tokenId;
     }
     
-    function getCarData(uint carId) public view returns(CarLibrary.CarData memory) {
+    function getCarData(uint carId) public view existingCar(carId) returns(CarLibrary.CarData memory) {
         return carsData[carId];
     }
 
-    function setCarRenter(uint carId, address renter) public onlyApprovedOrOwner(carId) notRented(carId) {
+    function setCarRenter(uint carId, address renter) public existingCar(carId) onlyApprovedOrOwner(carId) notRented(carId) {
         carsData[carId].renter = renter;
     }
 
-    function addCarKm(uint carId, uint24 amount) public onlyApprovedOrOwner(carId){
+    function addCarKm(uint carId, uint24 amount) public existingCar(carId) onlyApprovedOrOwner(carId){
         CarLibrary.CarData storage car = carsData[carId];
         car.kms += amount;
     }
     
-    function burn(uint256 carId) public onlyApprovedOrOwner(carId) notRented(carId) {
+    function burn(uint256 carId) public existingCar(carId) onlyApprovedOrOwner(carId) notRented(carId) {
         _burn(carId);
     }
 
