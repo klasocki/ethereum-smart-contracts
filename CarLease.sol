@@ -211,11 +211,14 @@ contract CarLease {
         Contract storage con = contracts[renter];
         con.extended = ContractExtensionStatus.ACCEPTED;
     }
-
+    
     function deleteContract(address renter, bool refundDeposit) internal {
         Contract memory con = contracts[renter];
-        address payable giveDepositTo = refundDeposit ? payable(renter) : owner; 
-        giveDepositTo.transfer(3*con.monthlyQuota);
+        if (refundDeposit) {
+            payable(renter).transfer(3*con.monthlyQuota);
+        } else {
+            transferrableAmount += 3*con.monthlyQuota;
+        }
         delete contracts[renter];
         carToken.setCarRenter(con.carId, address(0));
     }
