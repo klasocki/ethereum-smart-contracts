@@ -127,7 +127,7 @@ contract CarLease {
             con.startTs = block.timestamp;
             con.amountPayed = con.monthlyQuota;
             carToken.setCarRenter(con.carId, contractRenter);
-            owner.transfer(con.monthlyQuota);
+            transferrableAmount += con.monthlyQuota;
         } else {
             payable(contractRenter).transfer(4*con.monthlyQuota);
             delete contracts[contractRenter];
@@ -135,16 +135,14 @@ contract CarLease {
 
     }
 
-    /// @notice Check if there is any unpaid contract. It also performs consecuent actions.
+    /// @notice Check if the contract related to the given car is unpaid or expired. It also performs consecuent actions.
     /// @dev This function does way too much. It should just check the payments, and not cancel or extend probably. 
-    /// Also the extensions and cancelations dont work that well, if the user breaks the car he can still extend contracts forever.
-    /// There is no way to loose the deposit other than not paying, so I can just keep extending forever.
-    function checkInsolvency(address renterToCheck) public {
+    function checkInsolvency(uint carId) public {
         // this should check if the contract is unpayed. 
         // If so, the locked amount must be sent to leasee (owner) and the contract must be eliminated.
         // A contract is unpaid if amountPayed < monthsPassed*monthlyQuota
 
-        //better to check using the carId instead of the renter address
+        address renterToCheck = carToken.getCarData(carId).renter;
 
         Contract memory con = contracts[renterToCheck];
         require(con.monthlyQuota > 0, "Contract not found.");
@@ -172,8 +170,8 @@ contract CarLease {
     }
 
     /// @notice Open the car, checking if the sender is authorized
-    function openCar(uint carId) public {
-        checkInsolvency(msg.sender);
+    function openCar(uint carId) public view {
+        // checkInsolvency(carId);
         require(contracts[msg.sender].carId==carId, "Car not rented to this user.");
     }
 
@@ -182,8 +180,6 @@ contract CarLease {
         uint tokenId = carToken.safeMint(msg.sender, model, colour, yearOfMatriculation, originalValue, kms);
         return tokenId;
     }
-
-
 
     /// @notice Function used to pay the rent, it can be payed everytime the renter wants.
     function payRent() public payable {
@@ -200,7 +196,7 @@ contract CarLease {
     /// @notice Called by the renter, extende a contract, the driver automatically becomes experienced because they drove our car before.
     /// @dev Right now the extension is not approved by the leasee
     function proposeContractExtension(MileageCap newMileageCap) public {
-        checkInsolvency(msg.sender);
+        // checkInsolvency(msg.sender);
         require(contracts[msg.sender].monthlyQuota > 0 && contracts[msg.sender].startTs > 0, "Contract not found.");
         Contract storage con = contracts[msg.sender];
         con.extended = ContractExtensionStatus.PROPOSED;
