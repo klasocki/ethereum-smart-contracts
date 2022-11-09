@@ -12,7 +12,7 @@ contract CarLease {
 
     struct Contract {
         uint monthlyQuota;
-        uint startTs;
+        uint32 startTs;
         uint carId;
         uint amountPayed;
         ContractDuration duration;
@@ -22,7 +22,7 @@ contract CarLease {
 
     enum MileageCap { SMALL, MEDIUM, LARGE, UNLIMITED }
     enum ContractDuration { ONE_MONTH, THREE_MONTHS, SIX_MONTHS, TWELVE_MONTHS }
-    enum YearsOfExperience { NEW_DRIVER, EXPERIENCED_DRIVER }
+    enum DrivingExperience { NEW_DRIVER, EXPERIENCED_DRIVER }
     enum ContractExtensionStatus { NOT_EXTENDED, PROPOSED, ACCEPTED }
 
     uint constant SECONDS_IN_MINUTE = 60;
@@ -48,11 +48,11 @@ contract CarLease {
 
     /// @notice Calculate the monthly quota of a car lease
     /// @dev this is just an example, it's still missing the car NFT in the calculation
-    /// @param yearsOfExperience the years of possession of a dricing license
+    /// @param drivingExperience wheter the renter is an experienced driver or not
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
     /// @return Monthly quota in ether (?)
-    function calculateMonthlyQuota(uint carId, YearsOfExperience yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public view returns(uint) {
+    function calculateMonthlyQuota(uint carId, DrivingExperience drivingExperience, MileageCap mileageCap, ContractDuration duration) public view returns(uint) {
 
         CarLibrary.CarData memory car = carToken.getCarData(carId);
 
@@ -76,7 +76,7 @@ contract CarLease {
             durationFactor = 1;
         }
 
-        uint experienceFactor = yearsOfExperience == YearsOfExperience.NEW_DRIVER ? 2 : 1;
+        uint experienceFactor = drivingExperience == DrivingExperience.NEW_DRIVER ? 2 : 1;
 
         uint quota = (durationFactor * mileageFactor * (experienceFactor)) / (1 + ((car.kms + 1 ) / 10000));
 
@@ -85,10 +85,10 @@ contract CarLease {
 
     /// @notice Propose a new contract to the leaser, the contract still needs to be confirmed by the leaser. The amount sent must be at least 4x the monthly quota (1 for the rent and 3 for the deposit).
     /// @param carId the car NFT id to rent
-    /// @param yearsOfExperience the years of driving license ownage
+    /// @param drivingExperience the years of driving license ownage
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
-    function proposeContract(uint carId, YearsOfExperience yearsOfExperience, MileageCap mileageCap, ContractDuration duration) public payable {
+    function proposeContract(uint carId, DrivingExperience drivingExperience, MileageCap mileageCap, ContractDuration duration) public payable {
 
         CarLibrary.CarData memory carData = carToken.getCarData(carId);
 
@@ -96,7 +96,7 @@ contract CarLease {
         require(carData.renter == address(0), "The car is already rented.");
         require(carData.yearOfMatriculation != 0, "The car doesn't exists.");
 
-        uint monthlyQuota = calculateMonthlyQuota(carId, yearsOfExperience, mileageCap, duration);
+        uint monthlyQuota = calculateMonthlyQuota(carId, drivingExperience, mileageCap, duration);
 
         require(msg.value >= 4 * monthlyQuota, "Amount sent is not enough."); // TODO: manage unit of measure
 
@@ -124,7 +124,7 @@ contract CarLease {
 
         if (accept) {
             require(carToken.getCarData(con.carId).renter == address(0), "Car is already rented!");
-            con.startTs = block.timestamp;
+            con.startTs = uint32(block.timestamp);
             con.amountPayed = con.monthlyQuota;
             carToken.setCarRenter(con.carId, contractRenter);
             transferrableAmount += con.monthlyQuota;
@@ -189,6 +189,7 @@ contract CarLease {
     }
 
     function retrieveMoney(uint amount) public onlyOwner {
+        // required because the SC also has the money of the deposits that shouldn't be transferrable.
         require(amount <= transferrableAmount, "Not enough money in the contract.");
         owner.transfer(amount);
     }
@@ -226,7 +227,7 @@ contract CarLease {
     function extendContract(address renter) internal {
         Contract storage con = contracts[renter];
 
-        uint newMonthlyQuota = calculateMonthlyQuota(con.carId, YearsOfExperience.EXPERIENCED_DRIVER, con.newMileageCap, ContractDuration.TWELVE_MONTHS);
+        uint newMonthlyQuota = calculateMonthlyQuota(con.carId, DrivingExperience.EXPERIENCED_DRIVER, con.newMileageCap, ContractDuration.TWELVE_MONTHS);
 
         uint newDeposit = 3*newMonthlyQuota;
         uint oldDeposit = 3*con.monthlyQuota;
@@ -243,7 +244,7 @@ contract CarLease {
 
         con.amountPayed -= con.monthlyQuota*lastContractDuration;
 
-        con.startTs = block.timestamp;
+        con.startTs = uint32(block.timestamp);
         con.extended = ContractExtensionStatus.NOT_EXTENDED;
         con.monthlyQuota = newMonthlyQuota;
         con.duration = ContractDuration.TWELVE_MONTHS;
