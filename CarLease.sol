@@ -232,7 +232,11 @@ contract CarLease {
 
         uint newDeposit = 3*newMonthlyQuota;
         uint oldDeposit = 3*con.monthlyQuota;
-        payable(renter).transfer(oldDeposit-newDeposit); // send the deposit difference
+        require(newDeposit <= oldDeposit, "New deposit can't be greater than old deposit.");
+
+        if (oldDeposit-newDeposit > 0) {
+            payable(renter).transfer(oldDeposit-newDeposit);
+        }
 
         uint lastContractDuration = 1;
         if (con.duration == ContractDuration.THREE_MONTHS) {
