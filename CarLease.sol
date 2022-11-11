@@ -172,7 +172,7 @@ contract CarLease {
     /// @notice Open the car, checking if the sender is authorized
     function openCar(uint carId) public view {
         // checkInsolvency(carId);
-        require(contracts[msg.sender].carId==carId, "Car not rented to this user.");
+        require(carToken.getCarData(carId).renter == msg.sender, "Car not rented to this user.");
     }
 
     /// @notice Mint a new car NFT and set the ownership to the leasee.
