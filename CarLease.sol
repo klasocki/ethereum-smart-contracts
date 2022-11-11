@@ -80,7 +80,7 @@ contract CarLease {
 
         uint quota = (durationFactor * mileageFactor * (experienceFactor)) / (1 + ((car.kms + 1 ) / 10000));
 
-        return quota*1e6;
+        return quota*1e6 + 1e7;
     }
 
     /// @notice Propose a new contract to the leaser, the contract still needs to be confirmed by the leaser. The amount sent must be at least 4x the monthly quota (1 for the rent and 3 for the deposit).
