@@ -125,9 +125,8 @@ contract CarLease {
         if (accept) {
             require(carToken.getCarData(con.carId).renter == address(0), "Car is already rented!");
             con.startTs = uint32(block.timestamp);
-            con.amountPayed = con.monthlyQuota;
             carToken.setCarRenter(con.carId, contractRenter);
-            transferrableAmount += con.monthlyQuota;
+            transferrableAmount += con.amountPayed;
         } else {
             payable(contractRenter).transfer(3*con.monthlyQuota+con.amountPayed);
             delete contracts[contractRenter];
