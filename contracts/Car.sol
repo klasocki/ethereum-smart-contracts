@@ -27,7 +27,7 @@ contract Car is ERC721, Ownable {
 
     constructor() ERC721("Car", "CAR") {}
 
-    modifier onlyApprovedOrOwner(uint256 carId) {
+    modifier onlyTokenOwner(uint256 carId) {
         require(_isApprovedOrOwner(_msgSender(), carId), "Caller is not owner nor approved");
         _;
     }
@@ -54,17 +54,18 @@ contract Car is ERC721, Ownable {
         return carsData[carId];
     }
 
-    function setCarRenter(uint carId, address renter) public existingCar(carId) onlyOwner notRented(carId) {
-        carsData[carId].renter = renter;
+    function setCarRenter(uint carId, address renter) public existingCar(carId) onlyOwner {
+        CarLibrary.CarData storage car = carsData[carId];
+        car.renter = renter;
     }
 
     // Called by trusted hardware (
-    function addCarKm(uint carId, uint24 amount) public existingCar(carId) onlyApprovedOrOwner(carId){
+    function addCarKm(uint carId, uint24 amount) public existingCar(carId) onlyTokenOwner(carId){
         CarLibrary.CarData storage car = carsData[carId];
         car.kms += amount;
     }
     
-    function burn(uint256 carId) public existingCar(carId) onlyApprovedOrOwner(carId) notRented(carId) {
+    function burn(uint256 carId) public existingCar(carId) onlyTokenOwner(carId) notRented(carId) {
         _burn(carId);
     }
 
