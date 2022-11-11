@@ -158,10 +158,16 @@ contract CarLease {
         }
 
         if (monthsPassed > durationMonths) {
-            if (con.extended == ContractExtensionStatus.ACCEPTED) {
-                extendContract(renterToCheck);  // If contract is expired and renewd, refund the difference of the deposit and renew the contract
+            // contract expired
+            if (con.amountPayed >= durationMonths*con.monthlyQuota){
+                if (con.extended == ContractExtensionStatus.ACCEPTED) {
+                    extendContract(renterToCheck);  // If contract is expired and renewd, refund the difference of the deposit and renew the contract
+                    checkInsolvency(carId); // TODO: check if this is needed, it's here to check the insolvency inside the newly created contract
+                } else {
+                    deleteContract(renterToCheck, true); // If contract is expired and not renewd, refund the deposit and delete the contract
+                }
             } else {
-                deleteContract(renterToCheck, true); // If contract is expired and not renewd, refund the deposit and delete the contract
+                deleteContract(renterToCheck, false); // The client hasn't payed some months, take the deposit and delete the contract
             }
         } else if (con.amountPayed < monthsPassed*con.monthlyQuota) {
             deleteContract(renterToCheck, false); // If not enough money paid, cancel the contract and take deposit
