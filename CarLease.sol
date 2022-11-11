@@ -146,7 +146,7 @@ contract CarLease {
 
         Contract memory con = contracts[renterToCheck];
         require(con.monthlyQuota > 0, "Contract not found.");
-        uint monthsPassed = (block.timestamp - con.startTs) / SECONDS_IN_MINUTE; // / MINUTES_IN_HOUR; HOURS_IN_DAY / DAYS_IN_MONTH; // TODO: test this calculation
+        uint monthsPassed = 1 + ( (block.timestamp - con.startTs) / SECONDS_IN_MINUTE / MINUTES_IN_HOUR / HOURS_IN_DAY / DAYS_IN_MONTH ); // TODO: test this calculation
 
         uint durationMonths = 1;
 
@@ -158,15 +158,15 @@ contract CarLease {
             durationMonths = 12;
         }
 
-        if (con.amountPayed < monthsPassed*con.monthlyQuota) {
-            deleteContract(renterToCheck, false); // If not enough money paid, cancel the contract and take deposit
-        } else if (monthsPassed >= durationMonths) {
+        if (monthsPassed > durationMonths) {
             if (con.extended == ContractExtensionStatus.ACCEPTED) {
                 extendContract(renterToCheck);  // If contract is expired and renewd, refund the difference of the deposit and renew the contract
             } else {
                 deleteContract(renterToCheck, true); // If contract is expired and not renewd, refund the deposit and delete the contract
             }
-        } 
+        } else if (con.amountPayed < monthsPassed*con.monthlyQuota) {
+            deleteContract(renterToCheck, false); // If not enough money paid, cancel the contract and take deposit
+        }
     }
 
     /// @notice Open the car, checking if the sender is authorized
