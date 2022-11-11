@@ -206,9 +206,11 @@ contract CarLease {
     }
 
     /// @notice 
-    function confirmContractExtension(address renter) public onlyOwner {
-        require(contracts[msg.sender].monthlyQuota > 0 && contracts[msg.sender].startTs > 0, "Contract not found.");
-        Contract storage con = contracts[renter];
+    function confirmContractExtension(uint carId) public onlyOwner {
+        address renterToExtend = carToken.getCarData(carId).renter;
+        require(contracts[renterToExtend].monthlyQuota > 0 && contracts[renterToExtend].startTs > 0, "Contract not found.");
+        require(contracts[renterToExtend].extended == ContractExtensionStatus.PROPOSED, "Contract not proposed to be extended.");
+        Contract storage con = contracts[renterToExtend];
         con.extended = ContractExtensionStatus.ACCEPTED;
     }
     
