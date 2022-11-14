@@ -30,8 +30,8 @@ describe("CarLease", function () {
 
     it("Should create carId zero and one", async function () {
       const { carLease } = await loadFixture(deployAndMintTwoCars);
-      const quota0 = await carLease.calculateMonthlyQuota(0, 0, 0, 0);
-      const quota1 = await carLease.calculateMonthlyQuota(1, 0, 0, 0);
+      const quota0 = await carLease.calculateMonthlyQuota(0, 0, 0, 0, 0, 0);
+      const quota1 = await carLease.calculateMonthlyQuota(1, 0, 0, 0, 0, 0);
 
       expect(Number(quota0) > 0).to.be.true;
       expect(Number(quota1) > 0).to.be.true;
@@ -62,31 +62,35 @@ describe("CarLease", function () {
 
     it("One month lease flow no extension", async function () {
       const ONE_MONTH_IN_SECS = 30 * 24 * 60 * 60;
+      const CAR_ID = 1;
 
       const { carLease, otherAccount } = await loadFixture(deployAndMintTwoCars);
-
-
-      const quota = await carLease.calculateMonthlyQuota(0, 0, 0, 0);
-      await carLease.connect(otherAccount).proposeContract(0, 0, 0, 0, { value: Number(quota)*4 });
+      
+      const quota = await carLease.calculateMonthlyQuota(CAR_ID, 0, 0, 0);
+      await carLease.connect(otherAccount).proposeContract(CAR_ID, 0, 0, 0, { value: Number(quota)*4 });
       await carLease.evaluateContract(otherAccount.address, true);
-      await carLease.connect(otherAccount).openCar(0);
+      await carLease.connect(otherAccount).openCar(CAR_ID);
 
       const halfMonth = (await time.latest()) + ONE_MONTH_IN_SECS/2;
       await time.increaseTo(halfMonth);
 
       // at the middle of the month the user can open the car
-      await carLease.checkInsolvency(0);
-      await carLease.connect(otherAccount).openCar(0); 
+      await carLease.checkInsolvency(CAR_ID);
+      await carLease.connect(otherAccount).openCar(CAR_ID); 
 
 
       const endMonth = (await time.latest()) + ONE_MONTH_IN_SECS/2;
       await time.increaseTo(endMonth);
 
       // should still be able to open before the lease is checked for insolvency
-      await carLease.connect(otherAccount).openCar(0); 
-      await carLease.checkInsolvency(0);
+      await carLease.connect(otherAccount).openCar(CAR_ID); 
+
+      await expect(
+        carLease.checkInsolvency(CAR_ID)
+      ).to.changeEtherBalance(otherAccount, Number(quota)*3);
+
       // now the car should be closed
-      await expect(carLease.connect(otherAccount).openCar(0)).to.be.revertedWith("Car not rented to this user.");
+      await expect(carLease.connect(otherAccount).openCar(CAR_ID)).to.be.revertedWith("Car not rented to this user.");
 
     });
 

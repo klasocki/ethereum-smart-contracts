@@ -16,9 +16,10 @@ contract CarLease {
         uint32 startTs;
         uint carId;
         uint amountPayed;
+        MileageCap mileageCap;
         ContractDuration duration;
         ContractExtensionStatus extended;
-        MileageCap newMileageCap; // used for contract extension
+        uint24 newKmsForExtension; // used for contract extension
     }
 
     enum MileageCap { SMALL, MEDIUM, LARGE, UNLIMITED }
@@ -53,9 +54,7 @@ contract CarLease {
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
     /// @return Monthly quota in ether (?)
-    function calculateMonthlyQuota(uint carId, DrivingExperience drivingExperience, MileageCap mileageCap, ContractDuration duration) public view returns(uint) {
-
-        CarLibrary.CarData memory car = carToken.getCarData(carId);
+    function calculateMonthlyQuota(uint24 carKms, uint24 originalValue, DrivingExperience drivingExperience, MileageCap mileageCap, ContractDuration duration) public pure returns(uint) {
 
         uint mileageFactor = 1;
 
@@ -65,6 +64,16 @@ contract CarLease {
             mileageFactor = 3;
         } else {if (mileageCap == MileageCap.UNLIMITED) 
             mileageFactor = 5;
+        }
+
+        uint originalValueFactor = 1;
+
+        if (originalValue > 20_000) {
+            originalValueFactor = 2;
+        } else if (originalValue > 40_000) {
+            originalValueFactor = 3;
+        } else if (originalValue > 40_000) {
+            originalValueFactor = 5;
         }
 
         uint durationFactor = 5;
@@ -79,7 +88,7 @@ contract CarLease {
 
         uint experienceFactor = drivingExperience == DrivingExperience.NEW_DRIVER ? 2 : 1;
 
-        uint quota = (durationFactor * mileageFactor * (experienceFactor)) / (1 + ((car.kms + 1 ) / 10000));
+        uint quota = (originalValueFactor * durationFactor * mileageFactor * (experienceFactor)) / (1 + ((carKms + 1 ) / 10000));
 
         return quota*1e6 + 1e7;
     }
@@ -97,11 +106,11 @@ contract CarLease {
         require(carData.renter == address(0), "The car is already rented.");
         require(carData.yearOfMatriculation != 0, "The car doesn't exists.");
 
-        uint monthlyQuota = calculateMonthlyQuota(carId, drivingExperience, mileageCap, duration);
+        uint monthlyQuota = calculateMonthlyQuota(carData.kms, carData.originalValue, drivingExperience, mileageCap, duration);
 
         require(msg.value >= 4 * monthlyQuota, "Amount sent is not enough."); // TODO: manage unit of measure
 
-        contracts[msg.sender] = Contract(monthlyQuota, 0, carId, msg.value - 3*monthlyQuota, duration, ContractExtensionStatus.NOT_EXTENDED, mileageCap);
+        contracts[msg.sender] = Contract(monthlyQuota, 0, carId, msg.value - 3*monthlyQuota, mileageCap, duration, ContractExtensionStatus.NOT_EXTENDED, carData.kms);
     }
     
     /// @notice Delete and refund a contract proposal, called by renter
@@ -163,7 +172,6 @@ contract CarLease {
             if (con.amountPayed >= durationMonths*con.monthlyQuota){
                 if (con.extended == ContractExtensionStatus.ACCEPTED) {
                     extendContract(renterToCheck);  // If contract is expired and renewd, refund the difference of the deposit and renew the contract
-                    checkInsolvency(carId); // TODO: check if this is needed, it's here to check the insolvency inside the newly created contract
                 } else {
                     deleteContract(renterToCheck, true); // If contract is expired and not renewd, refund the deposit and delete the contract
                 }
@@ -186,6 +194,11 @@ contract CarLease {
         uint tokenId = carToken.safeMint(msg.sender, model, colour, yearOfMatriculation, originalValue, kms);
         return tokenId;
     }
+    
+    /// @notice Function that allows users to see how much they have already payed
+    function getAmountPayed() public view returns(uint) {
+        return contracts[msg.sender].amountPayed;
+    }
 
     /// @notice Function used to pay the rent, it can be payed everytime the renter wants.
     function payRent() public payable {
@@ -202,27 +215,67 @@ contract CarLease {
 
     /// @notice Called by the renter, extende a contract, the driver automatically becomes experienced because they drove our car before.
     /// @dev Right now the extension is not approved by the leasee
-    function proposeContractExtension(MileageCap newMileageCap) public {
-        // checkInsolvency(msg.sender);
-        require(contracts[msg.sender].monthlyQuota > 0 && contracts[msg.sender].startTs > 0, "Contract not found.");
+    function proposeContractExtension(uint24 newKmsForExtension) public payable {
         Contract storage con = contracts[msg.sender];
+
+        CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
+        uint newMonthlyQuota = calculateMonthlyQuota(newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
+
+        require(con.monthlyQuota > 0 && con.startTs > 0, "Contract not found.");
+        require(msg.value == newMonthlyQuota, "You need to pay first month's rent when proposing an extension");
+
+        uint durationMonths = 1;
+
+        if (con.duration == ContractDuration.THREE_MONTHS) {
+            durationMonths = 3;
+        } else if (con.duration == ContractDuration.SIX_MONTHS) {
+            durationMonths = 6;
+        } else if (con.duration == ContractDuration.TWELVE_MONTHS) {
+            durationMonths = 12;
+        }
+
+        uint endTimestamp = durationMonths*DAYS_IN_MONTH*HOURS_IN_DAY*MINUTES_IN_HOUR*SECONDS_IN_MINUTE;
+        uint oneWeekInSeconds = SECONDS_IN_MINUTE*MINUTES_IN_HOUR*HOURS_IN_DAY*7;
+
+        require((endTimestamp-block.timestamp) <= oneWeekInSeconds, "You can only propose extension during the last week.");
+        require(carData.kms <= newKmsForExtension,"The new kms must be greater or equal than the current kms.");
+        
         con.extended = ContractExtensionStatus.PROPOSED;
-        con.newMileageCap = newMileageCap;
-        // Commented because it's done when the contract is extended
-        //con.newMonthlyQuota = calculateMonthlyQuota(con.carId, YearsOfExperience.EXPERIENCED_DRIVER, newMileageCap, con.duration);
+        con.newKmsForExtension = newKmsForExtension;
+    }
+
+    function cancelContractExtension() public {
+        Contract storage con = contracts[msg.sender];
+        require(con.monthlyQuota > 0 && con.startTs > 0, "Contract not found.");
+        require(con.extended == ContractExtensionStatus.PROPOSED, "Contract not proposed to be extended.");
+
+        //transfer back newMonthlyQuota instead of old monthly quota
+        con.extended = ContractExtensionStatus.NOT_EXTENDED;
+        CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
+        uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
+
+        payable(msg.sender).transfer(newMonthlyQuota);
     }
 
     /// @notice 
     function confirmContractExtension(uint carId) public onlyOwner {        
         address renterToExtend = carToken.getCarData(carId).renter;
-        require(contracts[renterToExtend].monthlyQuota > 0 && contracts[renterToExtend].startTs > 0, "Contract not found.");
-        require(contracts[renterToExtend].extended == ContractExtensionStatus.PROPOSED, "Contract not proposed to be extended.");
-        Contract storage con = contracts[renterToExtend];
+        Contract memory con = contracts[renterToExtend];
+        require(con.extended == ContractExtensionStatus.PROPOSED, "Contract not proposed to be extended.");
         con.extended = ContractExtensionStatus.ACCEPTED;
+        CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
+        uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
+        transferrableAmount += newMonthlyQuota;
     }
     
     function deleteContract(address renter, bool refundDeposit) internal {
         Contract memory con = contracts[renter];
+        CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
+        uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
+
+        if (con.extended == ContractExtensionStatus.PROPOSED) {
+            payable(renter).transfer(newMonthlyQuota);
+        }
         if (refundDeposit) {
             payable(renter).transfer(3*con.monthlyQuota);
         } else {
@@ -234,19 +287,14 @@ contract CarLease {
 
     function extendContract(address renter) internal {
 
-        console.log("extending...");
-
         Contract storage con = contracts[renter];
-        uint newMonthlyQuota = calculateMonthlyQuota(con.carId, DrivingExperience.EXPERIENCED_DRIVER, con.newMileageCap, ContractDuration.TWELVE_MONTHS);
+        CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
+        uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
         console.log("newMonthlyQuota: %s", newMonthlyQuota);
         uint newDeposit = 3*newMonthlyQuota;
         uint oldDeposit = 3*con.monthlyQuota;
 
-        require(newMonthlyQuota <= con.monthlyQuota, "New monthly quota can't be greater than the old one.");
-
-        if (oldDeposit-newDeposit > 0) {
-            payable(renter).transfer(oldDeposit-newDeposit);
-        }
+        con.amountPayed += oldDeposit - newDeposit;
 
         uint lastContractDuration = 1;
         if (con.duration == ContractDuration.THREE_MONTHS) {
@@ -258,7 +306,6 @@ contract CarLease {
         }
 
         con.amountPayed -= con.monthlyQuota*lastContractDuration;
-
         con.startTs = uint32(block.timestamp);
         con.extended = ContractExtensionStatus.NOT_EXTENDED;
         con.monthlyQuota = newMonthlyQuota;
