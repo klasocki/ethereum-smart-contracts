@@ -256,8 +256,7 @@ contract CarLease {
         CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
         uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
 
-        // remove the first month's rent from the amount payed and refund it
-        // con.amountPayed -= con.monthlyQuota;
+        // refound the first monthly quota
         payable(msg.sender).transfer(newMonthlyQuota);
 
     }
@@ -277,6 +276,7 @@ contract CarLease {
         if (refundDeposit) {
             uint refundableAmount = 3*con.monthlyQuota;
             if (con.extended == ContractExtensionStatus.PROPOSED) {
+                // If the contract extension has been proposed but not accepted, we refund the pre-paid 1st month's rent when deleting the contract
                 refundableAmount += getNewMonthlyQuota(leasee);
             }
             payable(leasee).transfer(refundableAmount);
