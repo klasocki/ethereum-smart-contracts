@@ -210,6 +210,7 @@ contract CarLease {
     function retrieveMoney(uint amount) external onlyOwner {
         // required because the SC also has the money of the deposits that shouldn't be transferrable.
         require(amount <= transferrableAmount, "Not enough money in the contract.");
+        transferrableAmount -= amount;
         owner.transfer(amount);
     }
 
