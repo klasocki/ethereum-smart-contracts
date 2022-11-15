@@ -367,54 +367,6 @@ describe("CarLease", function () {
       ).to.changeEtherBalance(otherAccount, Number(quota)*3 + Number(newQuota));
     });
 
-    it("Multiple extensions", async function () {
-      const ONE_MONTH_IN_SECS = 30 * 24 * 60 * 60;
-      const ONE_DAY_IN_SECS = 24 * 60 * 60;
-      const CAR_ID = 0;
-
-      const { carLease, otherAccount, nftContract } = await loadFixture(deployAndMintTwoCars);
-
-      const carData = await nftContract.getCarData(CAR_ID);
-      const quota = await carLease.calculateMonthlyQuota(carData.kms, carData.originalValue, 0, 0, 0);
-      await carLease.connect(otherAccount).proposeContract(0, 0, 0, 0, { value: Number(quota)*4 });
-      await carLease.evaluateContract(otherAccount.address, true);
-      await carLease.connect(otherAccount).openCar(0);
-
-      const endMonth = (await time.latest()) + ONE_DAY_IN_SECS*25;
-      await time.increaseTo(endMonth);
-
-      // when one week is missing, the user requests an extension
-      const newQuota = await carLease.calculateMonthlyQuota(carData.kms+2_000, carData.originalValue, 1, 0, 3);
-      await carLease.connect(otherAccount).proposeContractExtension(carData.kms+2_000, { value: Number(newQuota) });
-      // the company evaluates the extension and accepts it
-      await carLease.confirmContractExtension(CAR_ID);
-
-      const newMonth = (await time.latest()) + ONE_DAY_IN_SECS*6;
-      await time.increaseTo(newMonth);
-
-      // the check insolvency should trigger the extension
-      await carLease.checkInsolvency(0);
-      
-      // now the contract should be extended
-      await carLease.connect(otherAccount).openCar(0);
-
-      //set time to last week and extend again
-      await carLease.connect(otherAccount).payRent({ value: Number(newQuota) });
-      const lastWeekOfExtension = (await time.latest()) + ONE_DAY_IN_SECS*25 + ONE_MONTH_IN_SECS * 11;
-      await time.increaseTo(lastWeekOfExtension);
-      const newNewQuota = await carLease.calculateMonthlyQuota(carData.kms+4_000, carData.originalValue, 1, 0, 3);
-      await carLease.connect(otherAccount).proposeContractExtension(carData.kms+4_000, { value: Number(newQuota) });
-      await carLease.confirmContractExtension(CAR_ID);
-
-      // set time to after the second extension has started
-      const newNewMonth = (await time.latest()) + ONE_DAY_IN_SECS*6;
-      await time.increaseTo(newNewMonth);
-
-      //make sure contract works
-      await carLease.checkInsolvency(0);
-      await carLease.connect(otherAccount).openCar(0);
-    });
-
     it("Cancelling a contract extension", async function () {
       const ONE_DAY_IN_SECS = 24 * 60 * 60;
       const CAR_ID = 0;
@@ -440,8 +392,6 @@ describe("CarLease", function () {
         carLease.connect(otherAccount).cancelContractExtension()
       ).to.changeEtherBalance(otherAccount, Number(newQuota));
     });
-
-    
 
   });
 });
