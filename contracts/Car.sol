@@ -14,7 +14,7 @@ library CarLibrary {
         uint16 yearOfMatriculation;
         uint24 originalValue;
         uint24 kms;
-        address renter; // current user or null
+        address leasee; // current user or null
     }
 }
 
@@ -33,7 +33,7 @@ contract Car is ERC721, Ownable {
     }
 
     modifier notRented(uint256 carId) {
-        require(carsData[carId].renter == address(0), "Cannot modify a rented car.");
+        require(carsData[carId].leasee == address(0), "Cannot modify a leased car.");
         _;
     }
 
@@ -54,15 +54,15 @@ contract Car is ERC721, Ownable {
         return carsData[carId];
     }
 
-    function setCarRenter(uint carId, address renter) public existingCar(carId) onlyOwner {
+    function setCarLeasee(uint carId, address leasee) public existingCar(carId) onlyOwner {
         CarLibrary.CarData storage car = carsData[carId];
-        car.renter = renter;
+        car.leasee = leasee;
     }
 
     // Called by trusted hardware (
-    function addCarKm(uint carId, uint24 amount) public existingCar(carId) onlyTokenOwner(carId){
+    function setCarKms(uint carId, uint24 newKms) public existingCar(carId) onlyOwner {
         CarLibrary.CarData storage car = carsData[carId];
-        car.kms += amount;
+        car.kms = newKms;
     }
     
     function burn(uint256 carId) public existingCar(carId) onlyTokenOwner(carId) notRented(carId) {

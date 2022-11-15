@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.0;
 
 import "./Car.sol";
 import "hardhat/console.sol";
 
 /** 
  * @title CarLease
- * @dev Implements car leasing
+ * @dev Implements decentralized car leasing system
  */
 contract CarLease {
 
@@ -48,12 +48,13 @@ contract CarLease {
         _;
     }
 
-    /// @notice Calculate the monthly quota of a car lease
-    /// @dev this is just an example, it's still missing the car NFT in the calculation
-    /// @param drivingExperience wheter the renter is an experienced driver or not
+    /// @notice Calculate the monthly quota of a car
+    /// @param carKms The mileage of the considered car
+    /// @param originalValue The original value of the considered car
+    /// @param drivingExperience wheter the leasee is an experienced driver or not
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
-    /// @return Monthly quota in ether (?)
+    /// @return Monthly quota in wei
     function calculateMonthlyQuota(uint24 carKms, uint24 originalValue, DrivingExperience drivingExperience, MileageCap mileageCap, ContractDuration duration) public pure returns(uint) {
 
         uint mileageFactor = 1;
@@ -98,23 +99,24 @@ contract CarLease {
     /// @param drivingExperience the years of driving license ownage
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
-    function proposeContract(uint carId, DrivingExperience drivingExperience, MileageCap mileageCap, ContractDuration duration) public payable {
+    function proposeContract(uint carId, DrivingExperience drivingExperience, MileageCap mileageCap, ContractDuration duration) external payable {
 
         CarLibrary.CarData memory carData = carToken.getCarData(carId);
 
         require(contracts[msg.sender].monthlyQuota == 0, "You already have a contract, delete it before doing a new one."); // easier way to check for previous proposals
-        require(carData.renter == address(0), "The car is already rented.");
+        require(carData.leasee == address(0), "The car is already rented.");
         require(carData.yearOfMatriculation != 0, "The car doesn't exists.");
 
         uint monthlyQuota = calculateMonthlyQuota(carData.kms, carData.originalValue, drivingExperience, mileageCap, duration);
 
-        require(msg.value >= 4 * monthlyQuota, "Amount sent is not enough."); // TODO: manage unit of measure
+        require(msg.value >= 4 * monthlyQuota, "Amount sent is not enough.");
+        require(msg.value <= (3+getDurationInMonths(duration))*monthlyQuota, "Amount sent is too much.");
 
         contracts[msg.sender] = Contract(monthlyQuota, 0, carId, msg.value - 3*monthlyQuota, mileageCap, duration, ContractExtensionStatus.NOT_EXTENDED, carData.kms);
     }
     
-    /// @notice Delete and refund a contract proposal, called by renter
-    function deleteContractProposal() public {
+    /// @notice Delete and refund a contract proposal, called by leasee
+    function deleteContractProposal() external {
 
         uint monthlyQuota = contracts[msg.sender].monthlyQuota;
 
@@ -125,190 +127,202 @@ contract CarLease {
         delete contracts[msg.sender];
     }
 
-    /// @notice Accept or refuse a contract proposal, called by leasee
-    function evaluateContract(address contractRenter, bool accept) public onlyOwner {
+    /// @notice Accept or refuse a contract proposal, called by leaser
+    function evaluateContract(address leasee, bool accept) external onlyOwner {
         
-        Contract storage con = contracts[contractRenter];
+        Contract storage con = contracts[leasee];
 
-        require(con.startTs == 0, "Renter doesn't have contracts to evaluate.");
+        require(con.monthlyQuota > 0, "Leasee doesn't have contracts to evaluate.");
+        require(con.startTs == 0, "Leasee contract has already started.");
 
         if (accept) {
-            require(carToken.getCarData(con.carId).renter == address(0), "Car is already rented!");
+            require(carToken.getCarData(con.carId).leasee == address(0), "Car is already rented!");
             con.startTs = uint32(block.timestamp);
-            carToken.setCarRenter(con.carId, contractRenter);
+            carToken.setCarLeasee(con.carId, leasee);
             transferrableAmount += con.amountPayed;
         } else {
-            payable(contractRenter).transfer(3*con.monthlyQuota+con.amountPayed);
-            delete contracts[contractRenter];
+            payable(leasee).transfer(3*con.monthlyQuota+con.amountPayed);
+            delete contracts[leasee];
         }
 
     }
 
-    /// @notice Check if the contract related to the given car is unpaid or expired. It also performs consecuent actions.
-    /// @dev This function does way too much. It should just check the payments, and not cancel or extend probably. 
-    function checkInsolvency(uint carId) public {
-        // this should check if the contract is unpayed. 
-        // If so, the locked amount must be sent to leasee (owner) and the contract must be eliminated.
-        // A contract is unpaid if amountPayed < monthsPassed*monthlyQuota
-
-        address renterToCheck = carToken.getCarData(carId).renter;
-
-        Contract memory con = contracts[renterToCheck];
+    /// @notice Check if the contract related to the given car is unpaid or expired. It also performs consecuent actions such as contract termination, extension and deposit refund.
+    /// @param carId the car NFT id to check
+    function checkInsolvency(uint carId) external {
+        // get the leasee related to the car
+        address leasee = carToken.getCarData(carId).leasee;
+        require(leasee != address(0), "Car is not rented.");
+        // get the contract related to the leasee
+        Contract memory con = contracts[leasee];
         require(con.monthlyQuota > 0, "Contract not found.");
+        // calculate the number of months elapsed since the contract start, including the current month
         uint monthsPassed = 1 + ( (block.timestamp - con.startTs) / SECONDS_IN_MINUTE / MINUTES_IN_HOUR / HOURS_IN_DAY / DAYS_IN_MONTH ); // TODO: test this calculation
-
-        uint durationMonths = 1;
-
-        if (con.duration == ContractDuration.THREE_MONTHS) {
-            durationMonths = 3;
-        } else if (con.duration == ContractDuration.SIX_MONTHS) {
-            durationMonths = 6;
-        } else if (con.duration == ContractDuration.TWELVE_MONTHS) {
-            durationMonths = 12;
-        }
+        // get total contract duration
+        uint durationMonths = getDurationInMonths(con.duration);
 
         if (monthsPassed > durationMonths) {
             // contract expired
             if (con.amountPayed >= durationMonths*con.monthlyQuota){
+                // contract paid in full, check for extension or terminate it
                 if (con.extended == ContractExtensionStatus.ACCEPTED) {
-                    extendContract(renterToCheck);  // If contract is expired and renewd, refund the difference of the deposit and renew the contract
+                    // if the contract is expired and renewd, perform the renewal
+                    extendContract(leasee);
                 } else {
-                    deleteContract(renterToCheck, true); // If contract is expired and not renewd, refund the deposit and delete the contract
+                    // if contract is expired and not renewd, refund the deposit and delete the contract
+                    deleteContract(leasee, true); 
                 }
             } else {
-                deleteContract(renterToCheck, false); // The client hasn't payed some months, take the deposit and delete the contract
+                // the client hasn't payed some months, take the deposit and delete the contract
+                deleteContract(leasee, false); 
             }
         } else if (con.amountPayed < monthsPassed*con.monthlyQuota) {
-            deleteContract(renterToCheck, false); // If not enough money paid, cancel the contract and take deposit
+            deleteContract(leasee, false); // If not enough money paid, cancel the contract and take deposit
         }
     }
 
     /// @notice Open the car, checking if the sender is authorized
-    function openCar(uint carId) public view {
+    function openCar(uint carId) external view {
         // checkInsolvency(carId);
-        require(carToken.getCarData(carId).renter == msg.sender, "Car not rented to this user.");
+        require(carToken.getCarData(carId).leasee == msg.sender, "Car not rented to this user.");
     }
 
     /// @notice Mint a new car NFT and set the ownership to the leasee.
-    function createCar(string memory model, string memory colour, uint16 yearOfMatriculation, uint24 originalValue, uint24 kms) public onlyOwner returns(uint) {
+    function createCar(string memory model, string memory colour, uint16 yearOfMatriculation, uint24 originalValue, uint24 kms) external onlyOwner returns(uint) {
         uint tokenId = carToken.safeMint(msg.sender, model, colour, yearOfMatriculation, originalValue, kms);
         return tokenId;
     }
     
     /// @notice Function that allows users to see how much they have already payed
-    function getAmountPayed() public view returns(uint) {
+    function getAmountPayed() external view returns(uint) {
         return contracts[msg.sender].amountPayed;
     }
 
-    /// @notice Function used to pay the rent, it can be payed everytime the renter wants.
-    function payRent() public payable {
-        require(contracts[msg.sender].monthlyQuota > 0, "Contract not found.");
-        contracts[msg.sender].amountPayed += msg.value;
+    /// @notice Function used to pay the rent, it can be payed everytime the leasee wants.
+    function payRent() external payable {
+        Contract storage con = contracts[msg.sender];
+        require(con.monthlyQuota > 0 && con.startTs > 0, "Contract not found.");
+        require(con.amountPayed + msg.value <= getDurationInMonths(con.duration)*con.monthlyQuota, "You sent too much money.");
+        con.amountPayed += msg.value;
         transferrableAmount += msg.value;
     }
 
-    function retrieveMoney(uint amount) public onlyOwner {
+    function retrieveMoney(uint amount) external onlyOwner {
         // required because the SC also has the money of the deposits that shouldn't be transferrable.
         require(amount <= transferrableAmount, "Not enough money in the contract.");
         owner.transfer(amount);
     }
 
-    /// @notice Called by the renter, extende a contract, the driver automatically becomes experienced because they drove our car before.
-    /// @dev Right now the extension is not approved by the leasee
-    function proposeContractExtension(uint24 newKmsForExtension) public payable {
+    /// @notice Called by the leasee, extende a contract, the driver automatically becomes experienced because they drove the car before.
+    /// @param newKmsForExtension the updated mileage of the car, it must be higher than the previous one. The Leaser can still refuse the extension id the new mileage is wrong.
+    function proposeContractExtension(uint24 newKmsForExtension) external payable {
         Contract storage con = contracts[msg.sender];
-
         CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
+        require(con.monthlyQuota > 0 && con.startTs > 0, "Contract not found.");        
+        
         uint newMonthlyQuota = calculateMonthlyQuota(newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
-
-        require(con.monthlyQuota > 0 && con.startTs > 0, "Contract not found.");
         require(msg.value == newMonthlyQuota, "You need to pay first month's rent when proposing an extension");
 
-        uint durationMonths = 1;
-
-        if (con.duration == ContractDuration.THREE_MONTHS) {
-            durationMonths = 3;
-        } else if (con.duration == ContractDuration.SIX_MONTHS) {
-            durationMonths = 6;
-        } else if (con.duration == ContractDuration.TWELVE_MONTHS) {
-            durationMonths = 12;
-        }
-
-        uint endTimestamp = durationMonths*DAYS_IN_MONTH*HOURS_IN_DAY*MINUTES_IN_HOUR*SECONDS_IN_MINUTE;
+        uint durationMonths = getDurationInMonths(con.duration);
+        uint endTimestamp = con.startTs + durationMonths*DAYS_IN_MONTH*HOURS_IN_DAY*MINUTES_IN_HOUR*SECONDS_IN_MINUTE;
         uint oneWeekInSeconds = SECONDS_IN_MINUTE*MINUTES_IN_HOUR*HOURS_IN_DAY*7;
-
-        require((endTimestamp-block.timestamp) <= oneWeekInSeconds, "You can only propose extension during the last week.");
+        
+        require(block.timestamp < endTimestamp, "Contract is expired.");
+        require(endTimestamp < block.timestamp + oneWeekInSeconds, "You can only propose an extension one week before the contract ends.");
         require(carData.kms <= newKmsForExtension,"The new kms must be greater or equal than the current kms.");
         
         con.extended = ContractExtensionStatus.PROPOSED;
         con.newKmsForExtension = newKmsForExtension;
+        // add the first month's rent to the amount payed, but don't add it to the transferrable amount (it will be added when the extension is performed)
+        con.amountPayed += msg.value; 
     }
 
-    function cancelContractExtension() public {
+    /// @notice Called by the leasee, remove the extension proposal.
+    function cancelContractExtension() external {
         Contract storage con = contracts[msg.sender];
         require(con.monthlyQuota > 0 && con.startTs > 0, "Contract not found.");
         require(con.extended == ContractExtensionStatus.PROPOSED, "Contract not proposed to be extended.");
 
-        //transfer back newMonthlyQuota instead of old monthly quota
+        // remove the fact that the user registered the extension
         con.extended = ContractExtensionStatus.NOT_EXTENDED;
+
+        // calculate the new monthly quota to refund
         CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
         uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
 
+        // remove the first month's rent from the amount payed and refund it
+        con.amountPayed -= con.monthlyQuota;
         payable(msg.sender).transfer(newMonthlyQuota);
+
     }
 
-    /// @notice 
-    function confirmContractExtension(uint carId) public onlyOwner {        
-        address renterToExtend = carToken.getCarData(carId).renter;
-        Contract memory con = contracts[renterToExtend];
+    /// @notice Called by the leaser, accept the extension proposal. To refuse the extension, just don't call this function and wait for the contract to expire.
+    function confirmContractExtension(uint carId) external onlyOwner {        
+        address leasee = carToken.getCarData(carId).leasee;
+        Contract storage con = contracts[leasee];
         require(con.extended == ContractExtensionStatus.PROPOSED, "Contract not proposed to be extended.");
         con.extended = ContractExtensionStatus.ACCEPTED;
-        CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
-        uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
-        transferrableAmount += newMonthlyQuota;
     }
     
-    function deleteContract(address renter, bool refundDeposit) internal {
-        Contract memory con = contracts[renter];
-        CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
-        uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
+    /// @notice Internal function that performs the deletion of a contract. Called with trusted parameters.
+    function deleteContract(address leasee, bool refundDeposit) internal {
+        Contract memory con = contracts[leasee];
 
-        if (con.extended == ContractExtensionStatus.PROPOSED) {
-            payable(renter).transfer(newMonthlyQuota);
+        uint excessPayed = 0;
+        
+        if (con.amountPayed > (con.monthlyQuota * getDurationInMonths(con.duration))) {
+            excessPayed = con.amountPayed - (con.monthlyQuota * getDurationInMonths(con.duration));
         }
+
         if (refundDeposit) {
-            payable(renter).transfer(3*con.monthlyQuota);
+            payable(leasee).transfer(3*con.monthlyQuota + excessPayed);
+            transferrableAmount -= excessPayed;
         } else {
             transferrableAmount += 3*con.monthlyQuota;
         }
-        delete contracts[renter];
-        carToken.setCarRenter(con.carId, address(0));
+        delete contracts[leasee];
+        carToken.setCarLeasee(con.carId, address(0));
     }
 
-    function extendContract(address renter) internal {
+    function extendContract(address leasee) internal {
 
-        Contract storage con = contracts[renter];
+        Contract storage con = contracts[leasee];
         CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
         uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
-        console.log("newMonthlyQuota: %s", newMonthlyQuota);
+
         uint newDeposit = 3*newMonthlyQuota;
         uint oldDeposit = 3*con.monthlyQuota;
 
-        con.amountPayed += oldDeposit - newDeposit;
-
-        uint lastContractDuration = 1;
-        if (con.duration == ContractDuration.THREE_MONTHS) {
-            lastContractDuration = 3;
-        } else if (con.duration == ContractDuration.SIX_MONTHS) {
-            lastContractDuration = 6;
-        } else if (con.duration == ContractDuration.TWELVE_MONTHS) {
-            lastContractDuration = 12;
+        // uncchecked because we know that oldDeposit is greater than newDeposit
+        unchecked {
+        // add the difference between the old and the new deposit to the amount payed (instead of refunding it, it's expensive)
+            con.amountPayed += oldDeposit - newDeposit; 
+            // add the difference to the transferrable amount
+            transferrableAmount += newDeposit - oldDeposit; 
+            // add the first month's rent to the transferrable amount, before it was just added to the amount payed
+            transferrableAmount += newMonthlyQuota;
         }
+
+        uint lastContractDuration = getDurationInMonths(con.duration);
 
         con.amountPayed -= con.monthlyQuota*lastContractDuration;
         con.startTs = uint32(block.timestamp);
         con.extended = ContractExtensionStatus.NOT_EXTENDED;
         con.monthlyQuota = newMonthlyQuota;
         con.duration = ContractDuration.TWELVE_MONTHS;
+
+        // update the car's kms
+        carToken.setCarKms(con.carId, con.newKmsForExtension);
+    }
+
+    function getDurationInMonths(ContractDuration duration) internal pure returns (uint) {
+        if (duration == ContractDuration.THREE_MONTHS) {
+            return 3;
+        } else if (duration == ContractDuration.SIX_MONTHS) {
+            return 6;
+        } else if (duration == ContractDuration.TWELVE_MONTHS) {
+            return 12;
+        }
+        return 1;
     }
 }
