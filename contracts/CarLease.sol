@@ -207,11 +207,16 @@ contract CarLease {
         transferrableAmount += msg.value;
     }
 
-    function retrieveMoney(uint amount) external onlyOwner {
+    // @notice Function to send the transferrable amount to a destination wallet by the contract owner, it can be used with change addresses
+    function retrieveMoney(uint amount, address to) external onlyOwner {
         // required because the SC also has the money of the deposits that shouldn't be transferrable.
         require(amount <= transferrableAmount, "Not enough money in the contract.");
+        payable(to).transfer(amount);
         transferrableAmount -= amount;
-        owner.transfer(amount);
+    }
+
+    function getTransferrableAmount() external view onlyOwner returns(uint) {
+        return transferrableAmount;
     }
 
     /// @notice Called by the leasee, extende a contract, the driver automatically becomes experienced because they drove the car before.
@@ -235,7 +240,7 @@ contract CarLease {
         con.extended = ContractExtensionStatus.PROPOSED;
         con.newKmsForExtension = newKmsForExtension;
         // add the first month's rent to the amount payed, but don't add it to the transferrable amount (it will be added when the extension is performed)
-        con.amountPayed += msg.value; 
+        // con.amountPayed += msg.value; 
     }
 
     /// @notice Called by the leasee, remove the extension proposal.
@@ -252,7 +257,7 @@ contract CarLease {
         uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
 
         // remove the first month's rent from the amount payed and refund it
-        con.amountPayed -= con.monthlyQuota;
+        // con.amountPayed -= con.monthlyQuota;
         payable(msg.sender).transfer(newMonthlyQuota);
 
     }
@@ -269,15 +274,12 @@ contract CarLease {
     function deleteContract(address leasee, bool refundDeposit) internal {
         Contract memory con = contracts[leasee];
 
-        uint excessPayed = 0;
-        
-        if (con.amountPayed > (con.monthlyQuota * getDurationInMonths(con.duration))) {
-            excessPayed = con.amountPayed - (con.monthlyQuota * getDurationInMonths(con.duration));
-        }
-
         if (refundDeposit) {
-            payable(leasee).transfer(3*con.monthlyQuota + excessPayed);
-            transferrableAmount -= excessPayed;
+            uint refundableAmount = 3*con.monthlyQuota;
+            if (con.extended == ContractExtensionStatus.PROPOSED) {
+                refundableAmount += getNewMonthlyQuota(leasee);
+            }
+            payable(leasee).transfer(refundableAmount);
         } else {
             transferrableAmount += 3*con.monthlyQuota;
         }
@@ -288,25 +290,18 @@ contract CarLease {
     function extendContract(address leasee) internal {
 
         Contract storage con = contracts[leasee];
-        CarLibrary.CarData memory carData = carToken.getCarData(con.carId);
-        uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carData.originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
+        
+        uint newMonthlyQuota = getNewMonthlyQuota(leasee);
 
         uint newDeposit = 3*newMonthlyQuota;
         uint oldDeposit = 3*con.monthlyQuota;
 
-        // uncchecked because we know that oldDeposit is greater than newDeposit
-        unchecked {
         // add the difference between the old and the new deposit to the amount payed (instead of refunding it, it's expensive)
-            con.amountPayed += oldDeposit - newDeposit; 
-            // add the difference to the transferrable amount
-            transferrableAmount += newDeposit - oldDeposit; 
-            // add the first month's rent to the transferrable amount, before it was just added to the amount payed
-            transferrableAmount += newMonthlyQuota;
-        }
-
-        uint lastContractDuration = getDurationInMonths(con.duration);
-
-        con.amountPayed -= con.monthlyQuota*lastContractDuration;
+        // and add the newMonthlyQuota to the amount payed, since it was payed when the user required the extension
+        con.amountPayed = newMonthlyQuota + oldDeposit - newDeposit; 
+        // add the difference to the transferrable amount
+        transferrableAmount += newMonthlyQuota + oldDeposit - newDeposit; 
+        
         con.startTs = uint32(block.timestamp);
         con.extended = ContractExtensionStatus.NOT_EXTENDED;
         con.monthlyQuota = newMonthlyQuota;
@@ -314,6 +309,12 @@ contract CarLease {
 
         // update the car's kms
         carToken.setCarKms(con.carId, con.newKmsForExtension);
+    }
+
+    function getNewMonthlyQuota(address leasee) internal view returns(uint) {
+        Contract memory con = contracts[leasee];
+        uint newMonthlyQuota = calculateMonthlyQuota(con.newKmsForExtension, carToken.getCarData(con.carId).originalValue, DrivingExperience.EXPERIENCED_DRIVER, con.mileageCap, ContractDuration.TWELVE_MONTHS);
+        return newMonthlyQuota;
     }
 
     function getDurationInMonths(ContractDuration duration) internal pure returns (uint) {

@@ -40,13 +40,35 @@ describe("CarLease", function () {
       expect(car0.model).to.equal("Audi A1");
       expect(car1.model).to.equal("Fiat Panda");
 
-      await expect(nftContract.getCarData(2)).to.be.revertedWith("Car doesn't exists.");
+      await expect(nftContract.getCarData(2)).to.be.revertedWith("Car doesn't exist.");
     });
   });
 
   describe("Leasing", function () {
 
-    it("Cannot modify a rented car", async function () {
+    it("Cannot approve a non-existing contract proposal", async function () {
+      const { carLease, otherAccount } = await loadFixture(deployAndMintTwoCars);
+      
+      await expect(carLease.evaluateContract(otherAccount.address, true)).to.be.revertedWith("Leasee doesn't have contracts to evaluate.");
+    });
+
+    it("Can burn not rented car", async function () {
+      const { nftContract } = await loadFixture(deployAndMintTwoCars);
+
+      await nftContract.burn(0);
+      await expect(nftContract.getCarData(0)).to.be.revertedWith("Car doesn't exist.");
+      
+    });
+
+    it("Cannot rent a non-existing car", async function () {
+      const CAR_ID = 2;
+      const { carLease, otherAccount } = await loadFixture(deployAndMintTwoCars);
+
+      await expect(carLease.connect(otherAccount).proposeContract(CAR_ID, 0, 0, 0, { value: 50e7})).to.be.revertedWith("Car doesn't exist.");
+      
+    });
+
+    it("Cannot burn a rented car", async function () {
       const ONE_MONTH_IN_SECS = 30 * 24 * 60 * 60;
       const CAR_ID = 0;
 
@@ -190,7 +212,7 @@ describe("CarLease", function () {
       await carLease.connect(otherAccount).openCar(CAR_ID);
 
       // Company tries to get the deposit, but it is not possible because client has paid so far
-      await expect(carLease.retrieveMoney(Number(quota)*3)).to.be.revertedWith("Not enough money in the contract.");
+      await expect(carLease.retrieveMoney(Number(quota)*3, owner.getAddress())).to.be.revertedWith("Not enough money in the contract.");
 
       const afterOneMonth = (await time.latest()) + ONE_MONTH_IN_SECS;
       await time.increaseTo(afterOneMonth);
@@ -198,7 +220,7 @@ describe("CarLease", function () {
 
       // Now the company can get the deposit because the client has not paid the second month
       await expect(
-        carLease.retrieveMoney(Number(quota)*3)
+        carLease.retrieveMoney(Number(quota)*3, owner.getAddress())
       ).to.changeEtherBalance(owner, Number(quota)*3);
       
     });
@@ -229,10 +251,120 @@ describe("CarLease", function () {
       await time.increaseTo(newMonth);
 
       // the check insolvency should trigger the extension
-      await carLease.checkInsolvency(0);
+      await carLease.checkInsolvency(CAR_ID);
       
       // now the contract should be extended
-      await carLease.connect(otherAccount).openCar(0);
+      await carLease.connect(otherAccount).openCar(CAR_ID);
+
+      // pay the remaining 11 months
+      const amountPayed = await carLease.connect(otherAccount).getAmountPayed();
+      await carLease.connect(otherAccount).payRent({ value: Number(newQuota)*12 - Number(amountPayed) });
+
+      // check insolvency before the end of the contract
+      const endOfContract = (await time.latest()) + ONE_MONTH_IN_SECS*11;
+      await time.increaseTo(endOfContract);
+
+      await carLease.checkInsolvency(CAR_ID);
+      await carLease.connect(otherAccount).openCar(CAR_ID);
+
+      // let the contract end
+      const contractEnded = (await time.latest()) + ONE_MONTH_IN_SECS;
+      await time.increaseTo(contractEnded);
+      await carLease.checkInsolvency(CAR_ID);
+      await expect(carLease.connect(otherAccount).openCar(CAR_ID)).to.be.revertedWith("Car not rented to this user.");
+
+    });
+
+    it("Multiple extensions", async function () {
+      const ONE_MONTH_IN_SECS = 30 * 24 * 60 * 60;
+      const ONE_DAY_IN_SECS = 24 * 60 * 60;
+      const CAR_ID = 0;
+      const EXTENSIONS = 5;
+
+      const { carLease, otherAccount, nftContract } = await loadFixture(deployAndMintTwoCars);
+
+      let carData = await nftContract.getCarData(CAR_ID);
+      const quota = await carLease.calculateMonthlyQuota(carData.kms, carData.originalValue, 0, 0, 3);
+      await carLease.connect(otherAccount).proposeContract(CAR_ID, 0, 0, 3, { value: Number(quota)*4 });
+      await carLease.evaluateContract(otherAccount.address, true);
+      await carLease.connect(otherAccount).openCar(CAR_ID);
+
+      // pay the remaining 11 months
+      await carLease.connect(otherAccount).payRent({ value: Number(quota)*11 });
+
+      for (let i = 0; i < EXTENSIONS; i++) {
+        
+        const lastWeekOfContract = (await time.latest()) + ONE_MONTH_IN_SECS*11 + ONE_DAY_IN_SECS*29;
+        await time.increaseTo(lastWeekOfContract);
+        await carLease.checkInsolvency(CAR_ID);
+        await carLease.connect(otherAccount).openCar(CAR_ID);
+        
+
+        // when one week is missing, the user requests an extension
+        carData = await nftContract.getCarData(CAR_ID);
+        const newQuota = await carLease.calculateMonthlyQuota(carData.kms+10_000, carData.originalValue, 1, 0, 3);
+        await carLease.connect(otherAccount).proposeContractExtension(carData.kms+10_000, { value: Number(newQuota) });
+        // the company evaluates the extension and accepts it
+        await carLease.confirmContractExtension(CAR_ID);
+        // the check insolvency should trigger the extension
+        await carLease.checkInsolvency(CAR_ID);
+
+        const firstDayOfExtension = lastWeekOfContract + ONE_DAY_IN_SECS*2;
+        await time.increaseTo(firstDayOfExtension);
+  
+        // the check insolvency should trigger the extension
+        await carLease.checkInsolvency(CAR_ID);
+        
+        // now the contract should be extended
+        await carLease.connect(otherAccount).openCar(CAR_ID);
+  
+        // pay the remaining 11 months
+        const amountPayed = await carLease.connect(otherAccount).getAmountPayed();
+        await carLease.connect(otherAccount).payRent({ value: Number(newQuota)*12 - Number(amountPayed) });
+
+      }
+  
+      // let the contract end
+      const contractEnded = (await time.latest()) + ONE_MONTH_IN_SECS*12 + ONE_DAY_IN_SECS;
+      await time.increaseTo(contractEnded);
+      await carLease.checkInsolvency(CAR_ID);
+      await expect(carLease.connect(otherAccount).openCar(CAR_ID)).to.be.revertedWith("Car not rented to this user.");
+    });
+
+    it("Extension not approved", async function () {
+      const ONE_DAY_IN_SECS = 24 * 60 * 60;
+      const CAR_ID = 0;
+
+      const { carLease, otherAccount, nftContract, owner } = await loadFixture(deployAndMintTwoCars);
+
+      const carData = await nftContract.getCarData(CAR_ID);
+      const quota = await carLease.calculateMonthlyQuota(carData.kms, carData.originalValue, 0, 0, 0);
+      await carLease.connect(otherAccount).proposeContract(CAR_ID, 0, 0, 0, { value: Number(quota)*4 });
+      await carLease.evaluateContract(otherAccount.address, true);
+      await carLease.connect(otherAccount).openCar(CAR_ID);
+
+      const endMonth = (await time.latest()) + ONE_DAY_IN_SECS*25;
+      await time.increaseTo(endMonth);
+
+      // when one week is missing, the user requests an extension
+      const newQuota = await carLease.calculateMonthlyQuota(carData.kms+2_000, carData.originalValue, 1, 0, 3);
+      await carLease.connect(otherAccount).proposeContractExtension(carData.kms+2_000, { value: Number(newQuota) });
+
+      // in the meantime, the company takes the money from the contract of the first month
+      await carLease.retrieveMoney(Number(quota), owner.getAddress());
+      // the company must not be able to retrieve the deposit
+      await expect(carLease.retrieveMoney(Number(quota)*3, owner.getAddress())).to.be.revertedWith("Not enough money in the contract.");
+      // the company must not be able to take the new first month
+      await expect(carLease.retrieveMoney(Number(newQuota), owner.getAddress())).to.be.revertedWith("Not enough money in the contract.");
+      
+      // the contract expires and the extension is not approved
+      const newMonth = (await time.latest()) + ONE_DAY_IN_SECS*6;
+      await time.increaseTo(newMonth);
+
+      // the check insolvency should trigger the end of the contract and the refund of the deposit + the new first month
+      await expect(
+        carLease.checkInsolvency(CAR_ID)
+      ).to.changeEtherBalance(otherAccount, Number(quota)*3 + Number(newQuota));
     });
 
   });

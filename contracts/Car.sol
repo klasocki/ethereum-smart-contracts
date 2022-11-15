@@ -38,7 +38,7 @@ contract Car is ERC721, Ownable {
     }
 
     modifier existingCar(uint256 carId) {
-        require(_exists(carId), "Car doesn't exists.");
+        require(_exists(carId), "Car doesn't exist.");
         _;
     }
 
@@ -59,7 +59,6 @@ contract Car is ERC721, Ownable {
         car.leasee = leasee;
     }
 
-    // Called by trusted hardware (
     function setCarKms(uint carId, uint24 newKms) public existingCar(carId) onlyOwner {
         CarLibrary.CarData storage car = carsData[carId];
         car.kms = newKms;
