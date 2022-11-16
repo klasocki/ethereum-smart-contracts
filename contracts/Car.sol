@@ -14,7 +14,7 @@ library CarLibrary {
         uint16 yearOfMatriculation;
         uint24 originalValue;
         uint24 kms;
-        address renter; // current user or null
+        address leasee; // current user or null
     }
 }
 
@@ -27,6 +27,21 @@ contract Car is ERC721, Ownable {
 
     constructor() ERC721("Car", "CAR") {}
 
+    modifier onlyTokenOwner(uint256 carId) {
+        require(_isApprovedOrOwner(_msgSender(), carId), "Caller is not owner nor approved");
+        _;
+    }
+
+    modifier notRented(uint256 carId) {
+        require(carsData[carId].leasee == address(0), "Cannot modify a leased car.");
+        _;
+    }
+
+    modifier existingCar(uint256 carId) {
+        require(_exists(carId), "Car doesn't exist.");
+        _;
+    }
+
     function safeMint(address to, string memory model, string memory colour, uint16 yearOfMatriculation, uint24 originalValue, uint24 kms) public onlyOwner returns(uint) {
         uint256 tokenId = _tokenIdCounter.current();
         _tokenIdCounter.increment();
@@ -35,24 +50,23 @@ contract Car is ERC721, Ownable {
         return tokenId;
     }
     
-    function getCarData(uint carId) public view returns(CarLibrary.CarData memory) {
+    function getCarData(uint carId) public view existingCar(carId) returns(CarLibrary.CarData memory) {
         return carsData[carId];
     }
 
-    function setCarRenter(uint carId, address renter) public onlyOwner {
-        carsData[carId].renter = renter;
+    function setCarLeasee(uint carId, address leasee) public existingCar(carId) onlyOwner {
+        CarLibrary.CarData storage car = carsData[carId];
+        car.leasee = leasee;
     }
 
-    function addCarKm(uint carId, uint24 amount) public {
-        require(_isApprovedOrOwner(_msgSender(), carId), "ERC721Burnable: caller is not owner nor approved");
+    function setCarKms(uint carId, uint24 newKms) public existingCar(carId) onlyOwner {
         CarLibrary.CarData storage car = carsData[carId];
-        car.kms += amount;
+        car.kms = newKms;
     }
     
-    function burn(uint256 tokenId) public {
-        //solhint-disable-next-line max-line-length
-        require(_isApprovedOrOwner(_msgSender(), tokenId), "ERC721Burnable: caller is not owner nor approved");
-        require(carsData[tokenId].renter == address(0), "Cannot burn a rented car.");
-        _burn(tokenId);
+    function burn(uint256 carId) public existingCar(carId) onlyTokenOwner(carId) notRented(carId) {
+        _burn(carId);
     }
+
+    
 }
