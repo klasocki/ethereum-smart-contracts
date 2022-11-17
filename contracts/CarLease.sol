@@ -14,7 +14,7 @@ contract CarLease {
     struct Contract {
         uint monthlyQuota;
         uint32 startTs;
-        uint carId;
+        uint32 carId;
         uint amountPayed;
         MileageCap mileageCap;
         ContractDuration duration;
@@ -99,7 +99,7 @@ contract CarLease {
     /// @param drivingExperience the years of driving license ownage
     /// @param mileageCap the selected mileage limit
     /// @param duration the duration of the contract
-    function proposeContract(uint carId, DrivingExperience drivingExperience, MileageCap mileageCap, ContractDuration duration) external payable {
+    function proposeContract(uint32 carId, DrivingExperience drivingExperience, MileageCap mileageCap, ContractDuration duration) external payable {
 
         CarLibrary.CarData memory carData = carToken.getCarData(carId);
 
@@ -149,7 +149,7 @@ contract CarLease {
 
     /// @notice Check if the contract related to the given car is unpaid or expired. It also performs consecuent actions such as contract termination, extension and deposit refund.
     /// @param carId the car NFT id to check
-    function checkInsolvency(uint carId) external {
+    function checkInsolvency(uint32 carId) external {
         // get the leasee related to the car
         address leasee = carToken.getCarData(carId).leasee;
         require(leasee != address(0), "Car is not rented.");
@@ -182,14 +182,14 @@ contract CarLease {
     }
 
     /// @notice Open the car, checking if the sender is authorized
-    function openCar(uint carId) external view {
+    function openCar(uint32 carId) external view {
         // checkInsolvency(carId);
         require(carToken.getCarData(carId).leasee == msg.sender, "Car not rented to this user.");
     }
 
     /// @notice Mint a new car NFT and set the ownership to the leasee.
-    function createCar(string memory model, string memory colour, uint16 yearOfMatriculation, uint24 originalValue, uint24 kms) external onlyOwner returns(uint) {
-        uint tokenId = carToken.safeMint(msg.sender, model, colour, yearOfMatriculation, originalValue, kms);
+    function createCar(string memory model, string memory colour, uint16 yearOfMatriculation, uint24 originalValue, uint24 kms) external onlyOwner returns(uint32) {
+        uint32 tokenId = carToken.safeMint(msg.sender, model, colour, yearOfMatriculation, originalValue, kms);
         return tokenId;
     }
     
@@ -262,11 +262,19 @@ contract CarLease {
     }
 
     /// @notice Called by the leaser, accept the extension proposal. To refuse the extension, just don't call this function and wait for the contract to expire.
-    function confirmContractExtension(uint carId) external onlyOwner {        
+    function confirmContractExtension(uint32 carId) external onlyOwner {        
         address leasee = carToken.getCarData(carId).leasee;
         Contract storage con = contracts[leasee];
         require(con.extended == ContractExtensionStatus.PROPOSED, "Contract not proposed to be extended.");
         con.extended = ContractExtensionStatus.ACCEPTED;
+    }
+
+    /// @notice Set the car kms, called by the leaser when the car is not rented.
+    function setCarKms(uint32 carId, uint24 newKms) external onlyOwner {  
+        CarLibrary.CarData memory carData = carToken.getCarData(carId);
+        require(carData.leasee == address(0), "Car is currently rented.");  
+        require(carData.kms <= newKms, "The new kms must be greater or equal than the current kms.");
+        carToken.setCarKms(carId, newKms);
     }
     
     /// @notice Internal function that performs the deletion of a contract. Called with trusted parameters.
