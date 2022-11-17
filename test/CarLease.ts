@@ -46,13 +46,21 @@ describe("CarLease", function () {
 
   describe("Leasing", function () {
 
+    it("Can set car kms when not rented", async function(){
+      const { carLease, nftContract } = await loadFixture(deployAndMintTwoCars);
+
+      await carLease.setCarKms(0, 50_000);
+
+      expect(await (await nftContract.getCarData(0)).kms).to.equal(50_000);
+    });
+
     it("Cannot approve a non-existing contract proposal", async function () {
       const { carLease, otherAccount } = await loadFixture(deployAndMintTwoCars);
       
       await expect(carLease.evaluateContract(otherAccount.address, true)).to.be.revertedWith("Leasee doesn't have contracts to evaluate.");
     });
 
-    it("Can burn not rented car", async function () {
+    it("Can burn a not rented car", async function () {
       const { nftContract } = await loadFixture(deployAndMintTwoCars);
 
       await nftContract.burn(0);
@@ -199,6 +207,26 @@ describe("CarLease", function () {
 
     });
 
+    it("Delete proposal and make a new one", async function () {
+      const CAR_ID_0 = 0;
+      const CAR_ID_1 = 1;
+
+      const { carLease, otherAccount, nftContract } = await loadFixture(deployAndMintTwoCars);
+
+      const carData = await nftContract.getCarData(CAR_ID_0);
+      const quota = await carLease.calculateMonthlyQuota(carData.kms, carData.originalValue, 0, 0, 0);
+      await carLease.connect(otherAccount).proposeContract(CAR_ID_0, 0, 0, 0, { value: Number(quota)*4 });
+
+      await expect(
+        carLease.connect(otherAccount).deleteContractProposal()
+      ).to.changeEtherBalance(otherAccount, Number(quota)*4);
+
+      const carData2 = await nftContract.getCarData(CAR_ID_1);
+      const quota2 = await carLease.calculateMonthlyQuota(carData2.kms, carData2.originalValue, 0, 0, 0);
+      await carLease.connect(otherAccount).proposeContract(CAR_ID_1, 0, 0, 0, { value: Number(quota2)*4 });
+
+    });
+
     it("Deposit given to company", async function () {
       const ONE_MONTH_IN_SECS = 30 * 24 * 60 * 60;
       const CAR_ID = 0;
@@ -279,7 +307,7 @@ describe("CarLease", function () {
       const ONE_MONTH_IN_SECS = 30 * 24 * 60 * 60;
       const ONE_DAY_IN_SECS = 24 * 60 * 60;
       const CAR_ID = 0;
-      const EXTENSIONS = 5;
+      const EXTENSIONS = 10;
 
       const { carLease, otherAccount, nftContract } = await loadFixture(deployAndMintTwoCars);
 
@@ -293,23 +321,27 @@ describe("CarLease", function () {
       await carLease.connect(otherAccount).payRent({ value: Number(quota)*11 });
 
       for (let i = 0; i < EXTENSIONS; i++) {
-        
-        const lastWeekOfContract = (await time.latest()) + ONE_MONTH_IN_SECS*11 + ONE_DAY_IN_SECS*29;
+
+        // go to the last week of the contract
+        const lastWeekOfContract = (await time.latest()) + ONE_MONTH_IN_SECS*11 + ONE_DAY_IN_SECS*25;
         await time.increaseTo(lastWeekOfContract);
+        
+        // here we are at the last week of the contract
         await carLease.checkInsolvency(CAR_ID);
         await carLease.connect(otherAccount).openCar(CAR_ID);
-        
 
-        // when one week is missing, the user requests an extension
+        // the user requests an extension
         carData = await nftContract.getCarData(CAR_ID);
         const newQuota = await carLease.calculateMonthlyQuota(carData.kms+10_000, carData.originalValue, 1, 0, 3);
         await carLease.connect(otherAccount).proposeContractExtension(carData.kms+10_000, { value: Number(newQuota) });
+        
         // the company evaluates the extension and accepts it
         await carLease.confirmContractExtension(CAR_ID);
+        
         // the check insolvency should trigger the extension
         await carLease.checkInsolvency(CAR_ID);
 
-        const firstDayOfExtension = lastWeekOfContract + ONE_DAY_IN_SECS*2;
+        const firstDayOfExtension = lastWeekOfContract + ONE_DAY_IN_SECS*5;
         await time.increaseTo(firstDayOfExtension);
   
         // the check insolvency should trigger the extension
@@ -321,7 +353,6 @@ describe("CarLease", function () {
         // pay the remaining 11 months
         const amountPayed = await carLease.connect(otherAccount).getAmountPayed();
         await carLease.connect(otherAccount).payRent({ value: Number(newQuota)*12 - Number(amountPayed) });
-
       }
   
       // let the contract end
