@@ -270,9 +270,10 @@ contract CarLease {
     }
 
     /// @notice Set the car kms, called by the leaser when the car is not rented.
-    function setCarKms(uint32 carId, uint24 newKms) external onlyOwner {        
-        uint24 oldKms = carToken.getCarData(carId).kms;
-        require(oldKms <= newKms, "The new kms must be greater or equal than the current kms.");
+    function setCarKms(uint32 carId, uint24 newKms) external onlyOwner {  
+        CarLibrary.CarData memory carData = carToken.getCarData(carId);
+        require(carData.leasee == address(0), "Car is currently rented.");  
+        require(carData.kms <= newKms, "The new kms must be greater or equal than the current kms.");
         carToken.setCarKms(carId, newKms);
     }
     
