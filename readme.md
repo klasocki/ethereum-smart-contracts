@@ -9,7 +9,7 @@ This project is an implementation of a car leasing system as a smart contract on
 - [Node.js](https://nodejs.org/en/)
 - [Hardhat](https://hardhat.org/getting-started/)
 
-### Compile and deploy
+### Compile and deploy
 
 To compile and deploy the smart contract, run the following command:
 
