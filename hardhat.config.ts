@@ -9,7 +9,7 @@ const { API_URL, API_KEY, PRIVATE_KEY } = process.env;
 
 const config: HardhatUserConfig = {
   solidity: "0.8.17",
-  defaultNetwork: "sepolia", 
+  defaultNetwork: "hardhat", 
   networks: {    
     hardhat: {},   
     sepolia: {     
